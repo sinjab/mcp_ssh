@@ -5,13 +5,11 @@ A Model Context Protocol (MCP) server with SSH capabilities, demonstrating core 
 ## Features
 
 - **MCP Server**: A fully functional MCP server with:
-  - **Tools**: A simple calculator tool that can add two numbers
-  - **Resources**: A greeting resource that provides personalized messages
-  - **Prompts**: A help prompt that provides guidance on using the server
+  - **Tools**: Execute commands on remote servers via SSH
+  - **Resources**: List available SSH hosts from your config
+  - **Prompts**: Help prompt that provides guidance on using the server
 - **SSH Integration**: Built-in SSH client capabilities:
-  - Connect to SSH servers using local SSH configs
-  - Execute commands remotely
-  - Interactive shell support
+  - Execute commands remotely using SSH configs
   - Host management from SSH config
   - Support for encrypted private keys
 
@@ -47,13 +45,10 @@ mcp_ssh
 ### Using the SSH Client
 
 ```python
-from mcp_ssh import ssh_connect, execute_command
+from mcp_ssh import execute_command
 
-# Connect to a host using SSH config
-client = ssh_connect(use_config=True, config_host="your-host")
-
-# Execute a command
-stdout, stderr = execute_command(client, "ls -la")
+# Execute a command on a remote host
+stdout, stderr = execute_command(host="your-host", command="ls -la")
 ```
 
 ### Client Configuration
@@ -67,7 +62,7 @@ To use this MCP server with a client, add the following configuration to your cl
       "command": "uv",
       "args": [
         "--directory",
-        "/Users/khs/Documents/projects/mcp_ssh",
+        "<your-project-directory>",
         "run",
         "mcp_ssh"
       ],
@@ -96,10 +91,10 @@ The server uses your local SSH config file (`~/.ssh/config`) for host configurat
 
 Example SSH config:
 ```
-Host dev1
-    HostName 147.135.105.207
-    User root
-    Port 2299
+Host example-host
+    HostName example.com
+    User username
+    Port 22
     IdentityFile ~/.ssh/id_rsa
 ```
 

@@ -166,26 +166,6 @@ def get_ssh_client_from_config(config_host: str) -> Optional[paramiko.SSHClient]
         logger.error(f"Failed to connect to {config_host}: {str(e)}")
         return None
 
-def get_ssh_client(hostname: str, username: Optional[str] = None, 
-                  password: Optional[str] = None, key_filename: Optional[str] = None, 
-                  port: int = 22) -> Optional[paramiko.SSHClient]:
-    """Get an SSH client connected to the specified host"""
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    
-    try:
-        client.connect(
-            hostname=hostname,
-            port=port,
-            username=username,
-            password=password,
-            key_filename=key_filename,
-            look_for_keys=True
-        )
-        return client
-    except Exception as e:
-        return None
-
 def execute_ssh_command(client: paramiko.SSHClient, command: str) -> Tuple[Optional[str], Optional[str]]:
     """Execute a command on the SSH server"""
     try:

@@ -10,24 +10,10 @@ from mcp_ssh.ssh import get_ssh_client_from_config, execute_ssh_command
 # Create MCP server
 mcp = FastMCP("MCP SSH Server")
 
-class SSHConfig(BaseModel):
-    """SSH configuration model"""
-    config_host: str = Field(..., description="Host entry to use from SSH config")
-
 class SSHCommand(BaseModel):
     """SSH command model"""
     command: str = Field(..., description="Command to execute")
     host: str = Field(..., description="Host to execute command on")
-
-@mcp.tool()
-def ssh_connect(config: SSHConfig) -> str:
-    """Connect to an SSH server using the SSH config host name"""
-    client = get_ssh_client_from_config(config.config_host)
-    
-    if client is None:
-        return f"Failed to connect to host '{config.config_host}'. Please check your SSH config."
-    
-    return f"Successfully connected to {config.config_host}"
 
 @mcp.tool()
 def execute_command(cmd: SSHCommand) -> str:
@@ -72,19 +58,14 @@ def ssh_help() -> str:
 1. List available SSH hosts:
    - Use the 'ssh://hosts' resource to see all configured hosts
 
-2. Connect to an SSH server:
-   - Use the 'ssh_connect' tool with your SSH config host name
-   - Example: ssh_connect(config_host="your-host")
-
-3. Execute commands:
+2. Execute commands:
    - Use the 'execute_command' tool to run commands on remote hosts
    - Specify the host (from SSH config) and command to execute
    - Example: execute_command(host="your-host", command="ls -la")
 
 Example usage:
 1. First, check available hosts using the 'ssh://hosts' resource
-2. Connect to a host using the 'ssh_connect' tool with the config host name
-3. Execute commands using the 'execute_command' tool
+2. Execute commands using the 'execute_command' tool
 
 Would you like to try any of these operations?"""
 
