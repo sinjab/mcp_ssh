@@ -15,3 +15,13 @@ wheels/
 # Logs
 logs/
 *.log
+
+# Testing and coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Development tools
+.mypy_cache/
+.ruff_cache/

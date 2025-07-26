@@ -1,0 +1,147 @@
+#!/bin/bash
+# Quick development commands for MCP SSH
+
+set -e  # Exit on any error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo_status() {
+    echo -e "${BLUE}📋 $1${NC}"
+}
+
+echo_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+echo_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+echo_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+# Function to run command and check status
+run_cmd() {
+    local cmd="$1"
+    local description="$2"
+    
+    echo_status "$description"
+    if eval "$cmd"; then
+        echo_success "$description completed"
+        return 0
+    else
+        echo_error "$description failed"
+        return 1
+    fi
+}
+
+# Main commands
+case "${1:-help}" in
+    "install")
+        echo_status "Installing MCP SSH in development mode..."
+        run_cmd "uv sync --extra dev" "Development installation"
+        ;;
+    
+    "test")
+        echo_status "Running tests..."
+        run_cmd "uv run pytest --cov=src/mcp_ssh --cov-report=term-missing -v" "Test execution"
+        ;;
+    
+    "test-quick")
+        echo_status "Running quick tests (no coverage)..."
+        run_cmd "uv run pytest -v --tb=short" "Quick test execution"
+        ;;
+    
+    "format")
+        echo_status "Formatting code..."
+        run_cmd "uv run black src/ tests/ scripts/" "Black formatting" && \
+        run_cmd "uv run isort src/ tests/ scripts/" "Import sorting"
+        ;;
+    
+    "lint")
+        echo_status "Running linting..."
+        run_cmd "uv run ruff check src/ tests/ scripts/" "Ruff linting"
+        ;;
+    
+    "type-check")
+        echo_status "Running type checking..."
+        run_cmd "uv run mypy src/" "MyPy type checking"
+        ;;
+    
+    "check")
+        echo_status "Running all code quality checks..."
+        uv run python scripts/dev.py --all
+        ;;
+    
+    "clean")
+        echo_status "Cleaning up generated files..."
+        rm -rf .pytest_cache/
+        rm -rf htmlcov/
+        rm -rf .coverage
+        rm -rf dist/
+        rm -rf build/
+        rm -rf *.egg-info/
+        find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+        echo_success "Cleanup completed"
+        ;;
+    
+    "build")
+        echo_status "Building package..."
+        run_cmd "python -m pip install build" "Installing build tool"
+        run_cmd "python -m build" "Building package"
+        ;;
+    
+    "serve")
+        echo_status "Starting MCP SSH server in development mode..."
+        echo_warning "Make sure you have SSH_KEY_PHRASE set if using encrypted keys"
+        run_cmd "uv run python -m mcp_ssh.server" "Starting server"
+        ;;
+    
+    "dev-server")
+        echo_status "Starting server with MCP development tools..."
+        echo_warning "This requires the 'mcp' CLI tools to be installed"
+        run_cmd "uv run mcp dev src/mcp_ssh/server.py" "Starting development server"
+        ;;
+    
+    "help"|*)
+        cat << EOF
+${BLUE}🛠️  MCP SSH Development Commands${NC}
+
+${YELLOW}Setup:${NC}
+  ./scripts/make install     Install development dependencies
+  
+${YELLOW}Testing:${NC}
+  ./scripts/make test        Run full test suite with coverage
+  ./scripts/make test-quick  Run tests without coverage (faster)
+  
+${YELLOW}Code Quality:${NC}
+  ./scripts/make format      Format code with black & isort
+  ./scripts/make lint        Run ruff linting
+  ./scripts/make type-check  Run mypy type checking
+  ./scripts/make check       Run all quality checks
+  
+${YELLOW}Development:${NC}
+  ./scripts/make serve       Start MCP server
+  ./scripts/make dev-server  Start with MCP dev tools (requires uv)
+  
+${YELLOW}Maintenance:${NC}
+  ./scripts/make clean       Clean generated files
+  ./scripts/make build       Build package
+  
+${YELLOW}Examples:${NC}
+  ./scripts/make test
+  ./scripts/make format && ./scripts/make test
+  ./scripts/make check
+
+${YELLOW}Environment Variables:${NC}
+  SSH_KEY_PHRASE    Passphrase for encrypted SSH keys
+  SSH_KEY_FILE      Path to SSH private key (default: ~/.ssh/id_rsa)
+EOF
+        ;;
+esac
