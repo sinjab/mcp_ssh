@@ -8,8 +8,10 @@ A production-ready Model Context Protocol (MCP) server with SSH capabilities, fe
 
 ## Features
 
-- **MCP Server**: Execute SSH commands, list hosts, interactive help
-- **SSH Integration**: Config parsing, encrypted keys, connection management  
+- **MCP Server**: Execute SSH commands, transfer files, list hosts, interactive help
+- **SSH Integration**: Config parsing, encrypted keys, connection management, file transfers
+- **Structured Output**: Rich JSON schemas for programmatic integration
+- **Progress Tracking**: Real-time progress reporting and logging  
 - **Production Ready**: 94% test coverage, type safety, quality assurance
 
 ## Quick Start
@@ -31,8 +33,9 @@ uv run mcp dev src/mcp_ssh/server.py
 
 | Type | Name | Description |
 |------|------|-------------|
-| **Tool** | `execute_command` | Execute commands on remote SSH hosts |
-| **Resource** | `ssh://hosts` | List all configured SSH hosts |
+| **Tool** | `execute_command` | Execute commands on remote SSH hosts with structured output |
+| **Tool** | `transfer_file` | Upload/download files via SCP with progress tracking |
+| **Resource** | `ssh://hosts` | List all configured SSH hosts with detailed info |
 | **Prompt** | `ssh_help` | Interactive guidance for SSH operations |
 
 ## Configuration

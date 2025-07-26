@@ -40,7 +40,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "mcp>=1.6.0",
+    "mcp>=1.7.0",
     "paramiko>=3.5.1",
 ]
 

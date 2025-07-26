@@ -196,3 +196,42 @@ def execute_ssh_command(
         return stdout_str, stderr_str
     except Exception as e:
         return None, str(e)
+
+
+def transfer_file_scp(
+    client: paramiko.SSHClient, local_path: str, remote_path: str, direction: str
+) -> int:
+    """Transfer files using SCP protocol"""
+    try:
+        scp = client.open_sftp()
+
+        if direction == "upload":
+            scp.put(local_path, remote_path)
+            # Get file size for bytes transferred
+            try:
+                import os
+
+                bytes_transferred = os.path.getsize(local_path)
+            except OSError:
+                bytes_transferred = 0
+        elif direction == "download":
+            scp.get(remote_path, local_path)
+            # Get file size for bytes transferred
+            try:
+                import os
+
+                bytes_transferred = os.path.getsize(local_path)
+            except OSError:
+                bytes_transferred = 0
+        else:
+            raise ValueError(
+                f"Invalid direction: {direction}. Use 'upload' or 'download'"
+            )
+
+        scp.close()
+        logger.info(f"Successfully transferred {bytes_transferred} bytes ({direction})")
+        return bytes_transferred
+
+    except Exception as e:
+        logger.error(f"File transfer failed: {str(e)}")
+        raise
