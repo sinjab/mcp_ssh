@@ -2,11 +2,11 @@
 SSH Client - Core SSH functionality
 """
 
-import os
-import paramiko
-from typing import Dict, Optional, Tuple
 import logging
+import os
 from pathlib import Path
+
+import paramiko
 
 # Set up logging to file
 log_dir = Path(__file__).parent.parent.parent / "logs"
@@ -15,89 +15,99 @@ log_file = log_dir / "ssh.log"
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(log_file),
-        logging.StreamHandler()  # Keep console output as well
-    ]
+        logging.StreamHandler(),  # Keep console output as well
+    ],
 )
 logger = logging.getLogger(__name__)
 
 # Log environment variables (showing SSH_KEY_PHRASE)
-env_vars = {k: v if k == 'SSH_KEY_PHRASE' else ('***' if 'KEY' in k or 'SECRET' in k or 'PASS' in k else v) 
-           for k, v in os.environ.items()}
+env_vars = {
+    k: (
+        v
+        if k == "SSH_KEY_PHRASE"
+        else ("***" if "KEY" in k or "SECRET" in k or "PASS" in k else v)
+    )
+    for k, v in os.environ.items()
+}
 logger.debug(f"Environment variables: {env_vars}")
 
-def parse_ssh_config() -> Dict[str, Dict[str, str]]:
+
+def parse_ssh_config() -> dict[str, dict[str, str]]:
     """Parse the SSH config file (~/.ssh/config) and return host configurations"""
     config_file = os.path.expanduser("~/.ssh/config")
     logger.debug(f"Reading SSH config from: {config_file}")
-    
+
     if not os.path.exists(config_file):
         logger.error(f"SSH config file not found at: {config_file}")
         return {}
-    
-    hosts = {}
+
+    hosts: dict[str, dict[str, str]] = {}
     current_host = None
-    
+
     try:
-        with open(config_file, 'r') as f:
+        with open(config_file) as f:
             for line in f:
                 line = line.strip()
-                if not line or line.startswith('#'):
+                if not line or line.startswith("#"):
                     continue
-                
-                if line.lower().startswith('host '):
+
+                if line.lower().startswith("host "):
                     host_pattern = line[5:].strip()
-                    if '*' in host_pattern or '?' in host_pattern:
+                    if "*" in host_pattern or "?" in host_pattern:
                         current_host = None
                         continue
                     current_host = host_pattern
                     hosts[current_host] = {}
                     logger.debug(f"Found host: {current_host}")
-                elif current_host and '=' in line:
-                    key, value = line.split('=', 1)
+                elif current_host and "=" in line:
+                    key, value = line.split("=", 1)
                     key = key.strip().lower()
                     value = value.strip()
                     hosts[current_host][key] = value
                     logger.debug(f"Added config for {current_host}: {key}={value}")
-                elif current_host and ' ' in line:
-                    parts = line.split(' ', 1)
+                elif current_host and " " in line:
+                    parts = line.split(" ", 1)
                     key = parts[0].strip().lower()
-                    value = parts[1].strip() if len(parts) > 1 else ''
+                    value = parts[1].strip() if len(parts) > 1 else ""
                     hosts[current_host][key] = value
                     logger.debug(f"Added config for {current_host}: {key}={value}")
-        
+
         logger.debug(f"Parsed hosts: {list(hosts.keys())}")
         return hosts
     except Exception as e:
         logger.error(f"Error parsing SSH config: {str(e)}")
         return {}
 
-def get_ssh_client_from_config(config_host: str) -> Optional[paramiko.SSHClient]:
+
+def get_ssh_client_from_config(config_host: str) -> paramiko.SSHClient | None:
     """Get an SSH client connected using only the SSH config host name"""
     logger.debug(f"Attempting to connect to host: {config_host}")
     hosts = parse_ssh_config()
-    
+
     if config_host not in hosts:
         logger.error(f"Host '{config_host}' not found in SSH config")
         return None
-    
+
     host_config = hosts[config_host]
     logger.debug(f"Found config for {config_host}: {host_config}")
-    
+
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    
+
     try:
         # Get the key file path from config or environment
-        key_filename = host_config.get('identityfile', os.environ.get('SSH_KEY_FILE', '~/.ssh/id_rsa'))
+        key_filename = host_config.get(
+            "identityfile", os.environ.get("SSH_KEY_FILE", "~/.ssh/id_rsa")
+        )
         loaded_key = None
-        
+
         if key_filename:
-            key_filename = os.path.expanduser(key_filename.strip('"\''))
+            key_filename = os.path.expanduser(key_filename.strip("\"'"))
             logger.debug(f"Using key file: {key_filename}")
-            
+
             # If key is encrypted, use the passphrase from environment
             if os.path.exists(key_filename):
                 try:
@@ -108,57 +118,65 @@ def get_ssh_client_from_config(config_host: str) -> Optional[paramiko.SSHClient]
                 except paramiko.SSHException as e:
                     logger.debug(f"Key requires passphrase: {str(e)}")
                     # If that fails, try with the passphrase
-                    ssh_key_phrase = os.environ.get('SSH_KEY_PHRASE')
+                    ssh_key_phrase = os.environ.get("SSH_KEY_PHRASE")
                     if ssh_key_phrase:
-                        logger.debug(f"SSH_KEY_PHRASE is set in environment: {ssh_key_phrase}")
+                        logger.debug(
+                            f"SSH_KEY_PHRASE is set in environment: {ssh_key_phrase}"
+                        )
                         try:
-                            loaded_key = paramiko.RSAKey.from_private_key_file(key_filename, password=ssh_key_phrase)
+                            loaded_key = paramiko.RSAKey.from_private_key_file(
+                                key_filename, password=ssh_key_phrase
+                            )
                             logger.debug("Successfully loaded key with passphrase")
-                            
+
                             # Log key details
                             if loaded_key:
                                 # Get the fingerprint
                                 fingerprint = loaded_key.get_fingerprint().hex()
                                 logger.debug(f"Key fingerprint: {fingerprint}")
-                                
+
                                 # Get the public key
                                 public_key = loaded_key.get_base64()
                                 logger.debug(f"Public key: {public_key}")
-                                
+
                                 # Get the key type
                                 key_type = loaded_key.get_name()
                                 logger.debug(f"Key type: {key_type}")
-                                
+
                                 # Get the key size
                                 key_size = loaded_key.get_bits()
                                 logger.debug(f"Key size: {key_size} bits")
                         except Exception as e:
-                            logger.error(f"Failed to load key with passphrase: {str(e)}")
+                            logger.error(
+                                f"Failed to load key with passphrase: {str(e)}"
+                            )
                             return None
                     else:
-                        logger.error("Private key is encrypted but SSH_KEY_PHRASE is not set in environment")
+                        logger.error(
+                            "Private key is encrypted but SSH_KEY_PHRASE is not set in environment"
+                        )
                         return None
             else:
                 logger.error(f"Key file does not exist: {key_filename}")
                 return None
         else:
             logger.debug("No key file specified in SSH config or environment")
-        
+
         connect_kwargs = {
-            'hostname': host_config.get('hostname', config_host),
-            'port': int(host_config.get('port', 22)),
-            'username': host_config.get('user'),
-            'look_for_keys': True
+            "hostname": host_config.get("hostname", config_host),
+            "port": int(host_config.get("port", 22)),
+            "username": host_config.get("user"),
+            "look_for_keys": True,
         }
-        
+
         # Add the loaded key if we have one
         if loaded_key:
-            connect_kwargs['pkey'] = loaded_key
-        
+            connect_kwargs["pkey"] = loaded_key
+
         # Remove None values
         connect_kwargs = {k: v for k, v in connect_kwargs.items() if v is not None}
         logger.debug(f"Connection parameters: {connect_kwargs}")
-        
+
         client.connect(**connect_kwargs)
         logger.info(f"Successfully connected to {config_host}")
         return client
@@ -166,12 +184,15 @@ def get_ssh_client_from_config(config_host: str) -> Optional[paramiko.SSHClient]
         logger.error(f"Failed to connect to {config_host}: {str(e)}")
         return None
 
-def execute_ssh_command(client: paramiko.SSHClient, command: str) -> Tuple[Optional[str], Optional[str]]:
+
+def execute_ssh_command(
+    client: paramiko.SSHClient, command: str
+) -> tuple[str | None, str | None]:
     """Execute a command on the SSH server"""
     try:
         stdin, stdout, stderr = client.exec_command(command)
-        stdout_str = stdout.read().decode('utf-8')
-        stderr_str = stderr.read().decode('utf-8')
+        stdout_str = stdout.read().decode("utf-8")
+        stderr_str = stderr.read().decode("utf-8")
         return stdout_str, stderr_str
     except Exception as e:
         return None, str(e)

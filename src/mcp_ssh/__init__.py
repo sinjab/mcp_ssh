@@ -3,11 +3,11 @@ MCP SSH - A Model Context Protocol server with SSH capabilities
 """
 
 from .server import (
-    mcp,
-    main,
+    SSHCommand,
     execute_command,
     list_ssh_hosts,
-    SSHCommand,
+    main,
+    mcp,
 )
 
 __version__ = "0.1.0"

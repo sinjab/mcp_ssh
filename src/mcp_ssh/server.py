@@ -2,53 +2,67 @@
 MCP SSH Server - A Model Context Protocol server with SSH capabilities
 """
 
+from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
-from mcp.server.fastmcp import FastMCP, Context
-from mcp_ssh.ssh import get_ssh_client_from_config, execute_ssh_command
+from mcp_ssh.ssh import execute_ssh_command, get_ssh_client_from_config
 
 # Create MCP server
 mcp = FastMCP("MCP SSH Server")
 
+
 class SSHCommand(BaseModel):
     """SSH command model"""
-    command: str = Field(..., description="Command to execute")
-    host: str = Field(..., description="Host to execute command on")
+
+    command: str = Field(..., description="Command to execute", min_length=1)
+    host: str = Field(..., description="Host to execute command on", min_length=1)
+
 
 @mcp.tool()
 def execute_command(cmd: SSHCommand) -> str:
     """Execute a command on the SSH server"""
-    client = get_ssh_client_from_config(cmd.host)
-    
-    if client is None:
-        return f"Failed to connect to host '{cmd.host}'. Please check your SSH config."
-    
-    stdout, stderr = execute_ssh_command(client, cmd.command)
-    
-    result = []
-    if stdout:
-        result.append(f"STDOUT:\n{stdout}")
-    if stderr:
-        result.append(f"STDERR:\n{stderr}")
-        
-    return "\n".join(result) if result else "Command executed successfully"
+    try:
+        client = get_ssh_client_from_config(cmd.host)
+
+        if client is None:
+            return (
+                f"Failed to connect to host '{cmd.host}'. Please check your SSH config."
+            )
+
+        stdout, stderr = execute_ssh_command(client, cmd.command)
+
+        result = []
+        if stdout:
+            result.append(f"STDOUT:\n{stdout}")
+        if stderr:
+            result.append(f"STDERR:\n{stderr}")
+
+        return "\n".join(result) if result else "Command executed successfully"
+    except Exception as e:
+        return f"Failed to connect to host '{cmd.host}'. Error: {str(e)}"
+
 
 @mcp.resource("ssh://hosts")
 def list_ssh_hosts() -> str:
     """List all available hosts from SSH config"""
-    from mcp_ssh.ssh import parse_ssh_config
-    ssh_configs = parse_ssh_config()
-    
-    if not ssh_configs:
-        return "No hosts found in SSH config or config file does not exist."
-    
-    result = ["Available SSH Hosts:"]
-    for host, config in ssh_configs.items():
-        host_info = config.get('hostname', host)
-        user_info = f" (User: {config.get('user')})" if 'user' in config else ""
-        result.append(f"- {host} -> {host_info}{user_info}")
-    
-    return "\n".join(result)
+    try:
+        from mcp_ssh.ssh import parse_ssh_config
+
+        ssh_configs = parse_ssh_config()
+
+        if not ssh_configs:
+            return "No hosts found in SSH config or config file does not exist."
+
+        result = ["Available SSH Hosts:"]
+        for host, config in ssh_configs.items():
+            host_info = config.get("hostname", host)
+            user_info = f" (User: {config.get('user')})" if "user" in config else ""
+            result.append(f"- {host} -> {host_info}{user_info}")
+
+        return "\n".join(result)
+    except Exception as e:
+        return f"Error reading SSH config: {str(e)}"
+
 
 @mcp.prompt()
 def ssh_help() -> str:
@@ -69,9 +83,11 @@ Example usage:
 
 Would you like to try any of these operations?"""
 
-def main():
+
+def main() -> None:
     """Main entry point for the MCP server"""
     mcp.run()
 
+
 if __name__ == "__main__":
-    main() 
+    main()
