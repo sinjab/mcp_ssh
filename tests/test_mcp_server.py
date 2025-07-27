@@ -4,7 +4,7 @@ Tests for MCP server functionality
 This module tests the MCP tools, resources, prompts, and server integration.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -28,16 +28,16 @@ class TestMCPTools:
     async def test_execute_command_success(self, mock_exec, mock_client):
         """Test successful command execution"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("command output", "")
+        mock_exec.return_value = ("command output", "", 0)
 
         cmd = SSHCommand(command="ls -la", host="test-host")
 
-        # Mock context
+        # Mock context with async methods
         mock_ctx = MagicMock()
-        mock_ctx.info = MagicMock()
-        mock_ctx.report_progress = MagicMock()
-        mock_ctx.debug = MagicMock()
-        mock_ctx.error = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.error = AsyncMock()
 
         result = await execute_command(cmd, mock_ctx)
 
@@ -45,6 +45,7 @@ class TestMCPTools:
         assert result.success is True
         assert result.stdout == "command output"
         assert result.stderr == ""
+        assert result.exit_code == 0
         assert result.host == "test-host"
         assert result.command == "ls -la"
         mock_client.assert_called_once_with("test-host")
@@ -57,12 +58,12 @@ class TestMCPTools:
 
         cmd = SSHCommand(command="ls", host="nonexistent")
 
-        # Mock context
+        # Mock context with async methods
         mock_ctx = MagicMock()
-        mock_ctx.info = MagicMock()
-        mock_ctx.report_progress = MagicMock()
-        mock_ctx.debug = MagicMock()
-        mock_ctx.error = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.error = AsyncMock()
 
         result = await execute_command(cmd, mock_ctx)
 
@@ -77,16 +78,16 @@ class TestMCPTools:
     async def test_execute_command_with_stderr(self, mock_exec, mock_client):
         """Test command execution with stderr output"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("stdout output", "stderr output")
+        mock_exec.return_value = ("stdout output", "stderr output", 0)
 
         cmd = SSHCommand(command="ls /nonexistent", host="test-host")
 
-        # Mock context
+        # Mock context with async methods
         mock_ctx = MagicMock()
-        mock_ctx.info = MagicMock()
-        mock_ctx.report_progress = MagicMock()
-        mock_ctx.debug = MagicMock()
-        mock_ctx.error = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.error = AsyncMock()
 
         result = await execute_command(cmd, mock_ctx)
 
@@ -94,6 +95,7 @@ class TestMCPTools:
         assert result.success is True
         assert result.stdout == "stdout output"
         assert result.stderr == "stderr output"
+        assert result.exit_code == 0
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
     @patch("mcp_ssh.server.execute_ssh_command")
@@ -101,16 +103,16 @@ class TestMCPTools:
     async def test_execute_command_no_output(self, mock_exec, mock_client):
         """Test command execution with no output"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("", "")
+        mock_exec.return_value = ("", "", 0)
 
         cmd = SSHCommand(command="touch /tmp/test", host="test-host")
 
-        # Mock context
+        # Mock context with async methods
         mock_ctx = MagicMock()
-        mock_ctx.info = MagicMock()
-        mock_ctx.report_progress = MagicMock()
-        mock_ctx.debug = MagicMock()
-        mock_ctx.error = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.error = AsyncMock()
 
         result = await execute_command(cmd, mock_ctx)
 
@@ -118,6 +120,7 @@ class TestMCPTools:
         assert result.success is True
         assert result.stdout == ""
         assert result.stderr == ""
+        assert result.exit_code == 0
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
     @patch("mcp_ssh.server.execute_ssh_command")
@@ -125,25 +128,24 @@ class TestMCPTools:
     async def test_execute_command_only_stderr(self, mock_exec, mock_client):
         """Test command execution with only stderr output"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("", "error only")
+        mock_exec.return_value = ("", "error only", 1)
 
         cmd = SSHCommand(command="invalid-command", host="test-host")
 
-        # Mock context
+        # Mock context with async methods
         mock_ctx = MagicMock()
-        mock_ctx.info = MagicMock()
-        mock_ctx.report_progress = MagicMock()
-        mock_ctx.debug = MagicMock()
-        mock_ctx.error = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.error = AsyncMock()
 
         result = await execute_command(cmd, mock_ctx)
 
         assert isinstance(result, CommandResult)
-        assert result.success is True
+        assert result.success is True  # Command executed, just returned error
         assert result.stdout == ""
         assert result.stderr == "error only"
-        assert "error only" in result
-        assert "STDOUT:" not in result
+        assert result.exit_code == 1
 
 
 class TestMCPResources:
@@ -201,10 +203,26 @@ class TestMCPResources:
 
         result = list_ssh_hosts()
 
-        assert "Available SSH Hosts:" in result
-        assert "production -> prod.example.com (User: deploy)" in result
-        assert "staging -> staging.example.com (User: ubuntu)" in result
-        assert "development -> dev.example.com" in result
+        assert isinstance(result, list)
+        assert len(result) == 3
+        
+        # Check production host
+        prod_host = next(h for h in result if h.name == "production")
+        assert prod_host.hostname == "prod.example.com"
+        assert prod_host.user == "deploy"
+        assert prod_host.port == 2222
+        
+        # Check staging host
+        staging_host = next(h for h in result if h.name == "staging")
+        assert staging_host.hostname == "staging.example.com"
+        assert staging_host.user == "ubuntu"
+        assert staging_host.port == 2222
+        
+        # Check development host
+        dev_host = next(h for h in result if h.name == "development")
+        assert dev_host.hostname == "dev.example.com"
+        assert dev_host.user is None
+        assert dev_host.port == 22
 
 
 class TestSSHCommandModel:
@@ -285,7 +303,10 @@ class TestMCPIntegration:
         """Test resource function directly"""
         with patch("mcp_ssh.ssh.parse_ssh_config", return_value={"host1": {}}):
             result = list_ssh_hosts()
-            assert "Available SSH Hosts:" in result
+            assert isinstance(result, list)
+            assert len(result) == 1
+            assert result[0].name == "host1"
+            assert result[0].hostname == "host1"
 
     def test_mcp_server_tools_exist(self):
         """Test that the server has the expected tools"""
@@ -307,25 +328,32 @@ class TestErrorHandling:
     """Test error handling scenarios"""
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    def test_execute_command_with_exception(self, mock_get_client):
+    @pytest.mark.asyncio
+    async def test_execute_command_with_exception(self, mock_get_client):
         """Test command execution when an exception occurs"""
         mock_get_client.side_effect = Exception("Unexpected error")
 
         cmd = SSHCommand(command="ls", host="error-host")
 
-        # The function should handle the exception and return an error message
-        result = execute_command(cmd)
-        assert isinstance(result, str)
-        # Should contain error information
-        assert "Failed to connect" in result or "error" in result.lower()
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.debug = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        # The function should handle the exception and return a CommandResult
+        result = await execute_command(cmd, mock_ctx)
+        assert isinstance(result, CommandResult)
+        assert result.success is False
+        assert "Unexpected error" in result.stderr
 
     @patch("mcp_ssh.ssh.parse_ssh_config")
     def test_list_hosts_with_exception(self, mock_parse):
         """Test host listing when an exception occurs"""
         mock_parse.side_effect = Exception("Config error")
 
-        # The function should handle the exception and return an error message
+        # The function should handle the exception and return an empty list
         result = list_ssh_hosts()
-        assert isinstance(result, str)
-        # Should contain error information or fallback message
-        assert "No hosts found" in result or "error" in result.lower()
+        assert isinstance(result, list)
+        assert len(result) == 0

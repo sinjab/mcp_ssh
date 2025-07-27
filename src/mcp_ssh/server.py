@@ -77,7 +77,7 @@ async def execute_command(cmd: SSHCommand, ctx: Context) -> CommandResult:
 
         await ctx.report_progress(0.7, message="Executing command...")
         await ctx.debug(f"Executing: {cmd.command}")
-        stdout, stderr = execute_ssh_command(client, cmd.command)
+        stdout, stderr, exit_code = execute_ssh_command(client, cmd.command)
         client.close()
 
         await ctx.report_progress(1.0, message="Command completed")
@@ -87,6 +87,7 @@ async def execute_command(cmd: SSHCommand, ctx: Context) -> CommandResult:
             success=True,
             stdout=stdout or "",
             stderr=stderr or "",
+            exit_code=exit_code,
             host=cmd.host,
             command=cmd.command,
         )

@@ -47,9 +47,14 @@ def mock_ssh_client():
     mock_stdin = MagicMock()
     mock_stdout = MagicMock()
     mock_stderr = MagicMock()
+    mock_channel = MagicMock()
 
     mock_stdout.read.return_value = b"command output"
     mock_stderr.read.return_value = b""
+    mock_channel.recv_exit_status.return_value = 0
+
+    # Attach channel to stdout for exit code access
+    mock_stdout.channel = mock_channel
 
     client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
 

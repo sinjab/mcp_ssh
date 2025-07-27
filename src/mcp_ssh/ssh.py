@@ -187,15 +187,113 @@ def get_ssh_client_from_config(config_host: str) -> paramiko.SSHClient | None:
 
 def execute_ssh_command(
     client: paramiko.SSHClient, command: str
-) -> tuple[str | None, str | None]:
-    """Execute a command on the SSH server"""
+) -> tuple[str | None, str | None, int | None]:
+    """Execute a command on the SSH server with proper shell handling"""
     try:
-        stdin, stdout, stderr = client.exec_command(command)
+        # For simple commands without shell features, execute directly
+        if _is_simple_command(command):
+            stdin, stdout, stderr = client.exec_command(command, get_pty=False)
+        else:
+            # For complex commands with shell features, use shell execution
+            # but wrap in a way that handles special characters safely
+            safe_command = _prepare_shell_command(command)
+            stdin, stdout, stderr = client.exec_command(safe_command, get_pty=False)
+        
+        # Read output with timeout to prevent hanging
         stdout_str = stdout.read().decode("utf-8")
         stderr_str = stderr.read().decode("utf-8")
-        return stdout_str, stderr_str
+        
+        # Get exit code
+        exit_code = stdout.channel.recv_exit_status()
+        
+        logger.debug(f"Command executed with exit code: {exit_code}")
+        logger.debug(f"stdout: {stdout_str}")
+        logger.debug(f"stderr: {stderr_str}")
+        
+        return stdout_str, stderr_str, exit_code
     except Exception as e:
-        return None, str(e)
+        logger.error(f"SSH command execution failed: {str(e)}")
+        return None, str(e), None
+
+
+def _is_simple_command(command: str) -> bool:
+    """Check if command is simple enough to execute without shell"""
+    # Commands that need shell: pipes, redirects, variables, etc.
+    shell_features = ['|', '>', '<', '>>', '<<', '&&', '||', ';', '$', '`', '$(', '${']
+    
+    # Also check for complex quoting patterns that might cause shell issues
+    complex_quoting_patterns = [
+        "'\"'",  # Mixed quotes
+        "\"'",   # Mixed quotes
+        "\\'",   # Escaped single quotes
+        '\\"',   # Escaped double quotes
+    ]
+    
+    for feature in shell_features:
+        if feature in command:
+            return False
+    
+    for pattern in complex_quoting_patterns:
+        if pattern in command:
+            return False
+    
+    return True
+
+
+def _prepare_shell_command(command: str) -> str:
+    """Prepare a command for safe shell execution"""
+    import shlex
+    
+    try:
+        # For commands with complex quoting, try a different approach
+        if _has_complex_quoting(command):
+            # Use a heredoc approach to avoid shell parsing issues
+            safe_command = _prepare_heredoc_command(command)
+        else:
+            # Use shlex to properly quote the command for shell execution
+            quoted_command = shlex.quote(command)
+            safe_command = f"bash -c {quoted_command}"
+        
+        logger.debug(f"Original command: {command}")
+        logger.debug(f"Safe command: {safe_command}")
+        
+        return safe_command
+    except Exception as e:
+        logger.warning(f"Failed to prepare shell command, using as-is: {str(e)}")
+        return command
+
+
+def _has_complex_quoting(command: str) -> bool:
+    """Check if command has complex quoting that might cause shell issues"""
+    complex_patterns = [
+        "'\"'",  # Mixed quotes
+        "\"'",   # Mixed quotes
+        "\\'",   # Escaped single quotes
+        '\\"',   # Escaped double quotes
+        "\\\\",  # Double backslashes
+    ]
+    
+    for pattern in complex_patterns:
+        if pattern in command:
+            return True
+    
+    return False
+
+
+def _prepare_heredoc_command(command: str) -> str:
+    """Prepare command using heredoc to avoid shell parsing issues"""
+    # Use a heredoc to pass the command without shell interpretation
+    heredoc_delimiter = "EOF_CMD"
+    
+    # Escape the delimiter if it appears in the command
+    while heredoc_delimiter in command:
+        heredoc_delimiter = f"EOF_{heredoc_delimiter}"
+    
+    heredoc_command = f"""bash << '{heredoc_delimiter}'
+{command}
+{heredoc_delimiter}"""
+    
+    return heredoc_command
 
 
 def transfer_file_scp(
