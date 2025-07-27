@@ -1,8 +1,8 @@
 """
 Tests for SSH client functionality
 
-This module tests SSH client connection management, command execution,
-and error handling scenarios.
+This module tests the SSH client operations including connection management,
+command execution, and file transfers.
 """
 
 import os
@@ -11,7 +11,12 @@ from unittest.mock import MagicMock, patch
 import paramiko
 import pytest
 
-from mcp_ssh.ssh import execute_ssh_command, get_ssh_client_from_config
+from mcp_ssh.ssh import (
+    execute_ssh_command,
+    get_ssh_client_from_config,
+    parse_ssh_config,
+    transfer_file_scp,
+)
 from tests.conftest import TestConstants
 
 
@@ -282,3 +287,158 @@ class TestCommandHandling:
         assert _has_complex_quoting("echo \"Mixed 'quotes\"") is False  # Not detected as complex
         assert _has_complex_quoting("ls -la") is False
         assert _has_complex_quoting("echo $HOME") is False
+
+
+class TestFileTransfer:
+    """Test file transfer functionality"""
+
+    @patch("os.path.exists")
+    @patch("os.path.isfile")
+    def test_transfer_file_upload_success(self, mock_isfile, mock_exists):
+        """Test successful file upload with source validation"""
+        mock_client = MagicMock()
+        mock_exists.return_value = True
+        mock_isfile.return_value = True
+        
+        # Mock SCP operations
+        mock_scp = MagicMock()
+        mock_client.open_sftp.return_value = mock_scp
+        
+        # Mock file size calculation
+        with patch("os.path.getsize", return_value=1024):
+            bytes_transferred = transfer_file_scp(
+                mock_client, "/tmp/test.txt", "/home/user/test.txt", "upload"
+            )
+        
+        assert bytes_transferred == 1024
+        mock_exists.assert_called_once_with("/tmp/test.txt")
+        mock_isfile.assert_called_once_with("/tmp/test.txt")
+        mock_scp.put.assert_called_once_with("/tmp/test.txt", "/home/user/test.txt")
+        mock_scp.close.assert_called_once()
+
+    @patch("os.path.exists")
+    def test_transfer_file_upload_source_not_exists(self, mock_exists):
+        """Test file upload when source file doesn't exist"""
+        mock_client = MagicMock()
+        mock_exists.return_value = False
+        
+        with pytest.raises(FileNotFoundError, match="Local file does not exist: /tmp/nonexistent.txt"):
+            transfer_file_scp(
+                mock_client, "/tmp/nonexistent.txt", "/home/user/test.txt", "upload"
+            )
+        
+        mock_exists.assert_called_once_with("/tmp/nonexistent.txt")
+
+    @patch("os.path.exists")
+    @patch("os.path.isfile")
+    def test_transfer_file_upload_source_not_file(self, mock_isfile, mock_exists):
+        """Test file upload when source path is not a file"""
+        mock_client = MagicMock()
+        mock_exists.return_value = True
+        mock_isfile.return_value = False
+        
+        with pytest.raises(ValueError, match="Local path is not a file: /tmp/directory"):
+            transfer_file_scp(
+                mock_client, "/tmp/directory", "/home/user/test.txt", "upload"
+            )
+        
+        mock_exists.assert_called_once_with("/tmp/directory")
+        mock_isfile.assert_called_once_with("/tmp/directory")
+
+    def test_transfer_file_download_success(self):
+        """Test successful file download with remote source validation"""
+        mock_client = MagicMock()
+        
+        # Mock SFTP for remote file check and SCP operations
+        mock_sftp = MagicMock()
+        mock_client.open_sftp.return_value = mock_sftp
+        
+        # Mock file size calculation
+        with patch("os.path.getsize", return_value=2048):
+            bytes_transferred = transfer_file_scp(
+                mock_client, "/tmp/download.txt", "/home/user/remote.txt", "download"
+            )
+        
+        assert bytes_transferred == 2048
+        # Verify remote file was checked
+        mock_sftp.stat.assert_called_once_with("/home/user/remote.txt")
+        # Should be called twice: once for stat check, once for transfer
+        assert mock_sftp.close.call_count == 2
+        mock_sftp.get.assert_called_once_with("/home/user/remote.txt", "/tmp/download.txt")
+        # Should be called twice: once for stat check, once for transfer
+        assert mock_client.open_sftp.call_count == 2
+
+    def test_transfer_file_download_remote_not_exists(self):
+        """Test file download when remote file doesn't exist"""
+        mock_client = MagicMock()
+        
+        # Mock SFTP for remote file check - simulate FileNotFoundError
+        mock_sftp = MagicMock()
+        mock_sftp.stat.side_effect = FileNotFoundError("File not found")
+        mock_client.open_sftp.return_value = mock_sftp
+        
+        with pytest.raises(FileNotFoundError, match="Remote file does not exist: /home/user/nonexistent.txt"):
+            transfer_file_scp(
+                mock_client, "/tmp/download.txt", "/home/user/nonexistent.txt", "download"
+            )
+        
+        mock_sftp.stat.assert_called_once_with("/home/user/nonexistent.txt")
+        mock_sftp.close.assert_called_once()
+        # Should only be called once for the stat check
+        mock_client.open_sftp.assert_called_once()
+
+    def test_transfer_file_invalid_direction(self):
+        """Test file transfer with invalid direction"""
+        mock_client = MagicMock()
+        
+        with pytest.raises(ValueError, match="Invalid direction: invalid. Use 'upload' or 'download'"):
+            transfer_file_scp(
+                mock_client, "/tmp/test.txt", "/home/user/test.txt", "invalid"
+            )
+
+    @patch("os.path.exists")
+    @patch("os.path.isfile")
+    def test_transfer_file_upload_exception_handling(self, mock_isfile, mock_exists):
+        """Test file upload exception handling"""
+        mock_client = MagicMock()
+        mock_exists.return_value = True
+        mock_isfile.return_value = True
+        
+        # Mock SCP operations to raise exception
+        mock_scp = MagicMock()
+        mock_scp.put.side_effect = Exception("Network error")
+        mock_client.open_sftp.return_value = mock_scp
+        
+        with pytest.raises(Exception, match="Network error"):
+            transfer_file_scp(
+                mock_client, "/tmp/test.txt", "/home/user/test.txt", "upload"
+            )
+        
+        mock_scp.put.assert_called_once_with("/tmp/test.txt", "/home/user/test.txt")
+        # close() should be called even when exception occurs
+        mock_scp.close.assert_called_once()
+
+    def test_transfer_file_download_exception_handling(self):
+        """Test file download exception handling"""
+        mock_client = MagicMock()
+        
+        # Mock SFTP for remote file check
+        mock_sftp = MagicMock()
+        # Mock SCP operations to raise exception
+        mock_scp = MagicMock()
+        mock_scp.get.side_effect = Exception("Network error")
+        
+        # Return different mocks for each call
+        mock_client.open_sftp.side_effect = [mock_sftp, mock_scp]
+        
+        with pytest.raises(Exception, match="Network error"):
+            transfer_file_scp(
+                mock_client, "/tmp/download.txt", "/home/user/remote.txt", "download"
+            )
+        
+        # Should be called once for stat check
+        mock_sftp.stat.assert_called_once_with("/home/user/remote.txt")
+        mock_sftp.close.assert_called_once()
+        # Should be called once for transfer attempt
+        mock_scp.get.assert_called_once_with("/home/user/remote.txt", "/tmp/download.txt")
+        mock_scp.close.assert_called_once()

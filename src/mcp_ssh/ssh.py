@@ -300,36 +300,52 @@ def transfer_file_scp(
     client: paramiko.SSHClient, local_path: str, remote_path: str, direction: str
 ) -> int:
     """Transfer files using SCP protocol"""
+    scp = None
     try:
-        scp = client.open_sftp()
-
+        # Validate source file exists before transfer
         if direction == "upload":
-            scp.put(local_path, remote_path)
-            # Get file size for bytes transferred
-            try:
-                import os
-
-                bytes_transferred = os.path.getsize(local_path)
-            except OSError:
-                bytes_transferred = 0
+            # Check local file exists for upload
+            if not os.path.exists(local_path):
+                raise FileNotFoundError(f"Local file does not exist: {local_path}")
+            if not os.path.isfile(local_path):
+                raise ValueError(f"Local path is not a file: {local_path}")
+            logger.info(f"Validated local file exists: {local_path}")
         elif direction == "download":
-            scp.get(remote_path, local_path)
-            # Get file size for bytes transferred
+            # Check remote file exists for download
+            sftp = client.open_sftp()
             try:
-                import os
-
-                bytes_transferred = os.path.getsize(local_path)
-            except OSError:
-                bytes_transferred = 0
+                sftp.stat(remote_path)
+                logger.info(f"Validated remote file exists: {remote_path}")
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Remote file does not exist: {remote_path}")
+            finally:
+                sftp.close()
         else:
             raise ValueError(
                 f"Invalid direction: {direction}. Use 'upload' or 'download'"
             )
 
-        scp.close()
+        scp = client.open_sftp()
+
+        if direction == "upload":
+            scp.put(local_path, remote_path)
+            # Get file size for bytes transferred
+            bytes_transferred = os.path.getsize(local_path)
+        elif direction == "download":
+            scp.get(remote_path, local_path)
+            # Get file size for bytes transferred
+            bytes_transferred = os.path.getsize(local_path)
+        else:
+            raise ValueError(
+                f"Invalid direction: {direction}. Use 'upload' or 'download'"
+            )
+
         logger.info(f"Successfully transferred {bytes_transferred} bytes ({direction})")
         return bytes_transferred
 
     except Exception as e:
         logger.error(f"File transfer failed: {str(e)}")
         raise
+    finally:
+        if scp:
+            scp.close()

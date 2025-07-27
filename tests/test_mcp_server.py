@@ -11,11 +11,14 @@ from pydantic import ValidationError
 
 from mcp_ssh.server import (
     CommandResult,
+    FileTransferRequest,
+    FileTransferResult,
     HostInfo,
     SSHCommand,
     execute_command,
     list_ssh_hosts,
     mcp,
+    transfer_file,
 )
 
 
@@ -146,6 +149,238 @@ class TestMCPTools:
         assert result.stdout == ""
         assert result.stderr == "error only"
         assert result.exit_code == 1
+
+
+class TestFileTransfer:
+    """Test file transfer functionality"""
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @patch("mcp_ssh.ssh.transfer_file_scp")
+    @pytest.mark.asyncio
+    async def test_transfer_file_upload_success(self, mock_transfer, mock_client):
+        """Test successful file upload with source validation"""
+        mock_client.return_value = MagicMock()
+        mock_transfer.return_value = 1024
+
+        request = FileTransferRequest(
+            host="test-host",
+            local_path="/tmp/test.txt",
+            remote_path="/home/user/test.txt",
+            direction="upload"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is True
+        assert result.bytes_transferred == 1024
+        assert result.local_path == "/tmp/test.txt"
+        assert result.remote_path == "/home/user/test.txt"
+        assert result.host == "test-host"
+        assert result.error_message == ""
+        
+        # Verify transfer was called with correct parameters
+        mock_transfer.assert_called_once_with(
+            mock_client.return_value, "/tmp/test.txt", "/home/user/test.txt", "upload"
+        )
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @patch("mcp_ssh.ssh.transfer_file_scp")
+    @pytest.mark.asyncio
+    async def test_transfer_file_upload_source_not_exists(self, mock_transfer, mock_client):
+        """Test file upload when source file doesn't exist"""
+        mock_client.return_value = MagicMock()
+        # Simulate FileNotFoundError from transfer_file_scp
+        mock_transfer.side_effect = FileNotFoundError("Local file does not exist: /tmp/nonexistent.txt")
+
+        request = FileTransferRequest(
+            host="test-host",
+            local_path="/tmp/nonexistent.txt",
+            remote_path="/home/user/test.txt",
+            direction="upload"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is False
+        assert "Local file does not exist" in result.error_message
+        assert result.local_path == "/tmp/nonexistent.txt"
+        assert result.remote_path == "/home/user/test.txt"
+        assert result.host == "test-host"
+        
+        # Verify transfer was attempted
+        mock_transfer.assert_called_once()
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @patch("mcp_ssh.ssh.transfer_file_scp")
+    @pytest.mark.asyncio
+    async def test_transfer_file_upload_source_not_file(self, mock_transfer, mock_client):
+        """Test file upload when source path is not a file"""
+        mock_client.return_value = MagicMock()
+        # Simulate ValueError from transfer_file_scp
+        mock_transfer.side_effect = ValueError("Local path is not a file: /tmp/directory")
+
+        request = FileTransferRequest(
+            host="test-host",
+            local_path="/tmp/directory",
+            remote_path="/home/user/test.txt",
+            direction="upload"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is False
+        assert "Local path is not a file" in result.error_message
+        assert result.local_path == "/tmp/directory"
+        assert result.remote_path == "/home/user/test.txt"
+        assert result.host == "test-host"
+        
+        # Verify transfer was attempted
+        mock_transfer.assert_called_once()
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @patch("mcp_ssh.ssh.transfer_file_scp")
+    @pytest.mark.asyncio
+    async def test_transfer_file_download_success(self, mock_transfer, mock_client):
+        """Test successful file download with remote source validation"""
+        mock_client.return_value = MagicMock()
+        mock_transfer.return_value = 2048
+
+        request = FileTransferRequest(
+            host="test-host",
+            local_path="/tmp/download.txt",
+            remote_path="/home/user/remote.txt",
+            direction="download"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is True
+        assert result.bytes_transferred == 2048
+        assert result.local_path == "/tmp/download.txt"
+        assert result.remote_path == "/home/user/remote.txt"
+        assert result.host == "test-host"
+        assert result.error_message == ""
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @patch("mcp_ssh.ssh.transfer_file_scp")
+    @pytest.mark.asyncio
+    async def test_transfer_file_download_remote_not_exists(self, mock_transfer, mock_client):
+        """Test file download when remote file doesn't exist"""
+        mock_client.return_value = MagicMock()
+        # Simulate FileNotFoundError from remote file check
+        mock_transfer.side_effect = FileNotFoundError("Remote file does not exist: /home/user/nonexistent.txt")
+
+        request = FileTransferRequest(
+            host="test-host",
+            local_path="/tmp/download.txt",
+            remote_path="/home/user/nonexistent.txt",
+            direction="download"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is False
+        assert "Remote file does not exist" in result.error_message
+        assert result.local_path == "/tmp/download.txt"
+        assert result.remote_path == "/home/user/nonexistent.txt"
+        assert result.host == "test-host"
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @pytest.mark.asyncio
+    async def test_transfer_file_connection_failure(self, mock_client):
+        """Test file transfer when SSH connection fails"""
+        mock_client.return_value = None
+
+        request = FileTransferRequest(
+            host="nonexistent-host",
+            local_path="/tmp/test.txt",
+            remote_path="/home/user/test.txt",
+            direction="upload"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is False
+        assert "Failed to connect to host 'nonexistent-host'" in result.error_message
+        assert result.local_path == "/tmp/test.txt"
+        assert result.remote_path == "/home/user/test.txt"
+        assert result.host == "nonexistent-host"
+
+    @patch("mcp_ssh.server.get_ssh_client_from_config")
+    @patch("mcp_ssh.ssh.transfer_file_scp")
+    @patch("os.path.exists")
+    @patch("os.path.isfile")
+    @pytest.mark.asyncio
+    async def test_transfer_file_transfer_exception(self, mock_isfile, mock_exists, mock_transfer, mock_client):
+        """Test file transfer when transfer operation fails"""
+        mock_client.return_value = MagicMock()
+        mock_exists.return_value = True
+        mock_isfile.return_value = True
+        mock_transfer.side_effect = Exception("Transfer failed due to network error")
+
+        request = FileTransferRequest(
+            host="test-host",
+            local_path="/tmp/test.txt",
+            remote_path="/home/user/test.txt",
+            direction="upload"
+        )
+
+        # Mock context with async methods
+        mock_ctx = MagicMock()
+        mock_ctx.info = AsyncMock()
+        mock_ctx.report_progress = AsyncMock()
+        mock_ctx.error = AsyncMock()
+
+        result = await transfer_file(request, mock_ctx)
+
+        assert isinstance(result, FileTransferResult)
+        assert result.success is False
+        assert "Transfer failed due to network error" in result.error_message
+        assert result.local_path == "/tmp/test.txt"
+        assert result.remote_path == "/home/user/test.txt"
+        assert result.host == "test-host"
 
 
 class TestMCPResources:
