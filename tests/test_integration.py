@@ -9,21 +9,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcp_ssh.server import SSHCommand, execute_command
+from mcp_ssh.server import CommandRequest, SSHCommand, execute_command
 
 
 class TestCoreIntegration:
     """Core integration tests for essential functionality"""
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    @patch("mcp_ssh.server.execute_ssh_command")
+    @patch("mcp_ssh.server.execute_command_background")
+    @patch("mcp_ssh.server.get_process_output")
     @pytest.mark.asyncio
-    async def test_end_to_end_command_execution(self, mock_exec, mock_get_client):
+    async def test_end_to_end_command_execution(
+        self, mock_get_output, mock_execute_bg, mock_get_client
+    ):
         """Test complete end-to-end command execution flow"""
         # Setup the mocks properly
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
-        mock_exec.return_value = ("integration test successful", "", 0)
+        mock_execute_bg.return_value = 12345
+        mock_get_output.return_value = (
+            "completed",
+            "integration test successful",
+            "",
+            0,
+        )
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -33,12 +42,13 @@ class TestCoreIntegration:
         mock_ctx.error = AsyncMock()
 
         # Execute command through the MCP interface
-        cmd = SSHCommand(command="echo 'integration test'", host="integration-host")
-        result = await execute_command(cmd, mock_ctx)
+        request = CommandRequest(
+            command="echo 'integration test'", host="integration-host"
+        )
+        result = await execute_command(request, mock_ctx)
 
         # Verify the complete chain was called
         mock_get_client.assert_called_once_with("integration-host")
-        mock_exec.assert_called_once_with(mock_client, "echo 'integration test'")
 
         # Verify result
         assert result.success is True
@@ -47,13 +57,17 @@ class TestCoreIntegration:
         assert result.exit_code == 0
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    @patch("mcp_ssh.server.execute_ssh_command")
+    @patch("mcp_ssh.server.execute_command_background")
+    @patch("mcp_ssh.server.get_process_output")
     @pytest.mark.asyncio
-    async def test_error_recovery_scenario(self, mock_exec, mock_get_client):
+    async def test_error_recovery_scenario(
+        self, mock_get_output, mock_execute_bg, mock_get_client
+    ):
         """Test error recovery in realistic scenarios"""
         # First command fails due to connection issue
         mock_get_client.side_effect = [None, MagicMock()]
-        mock_exec.return_value = ("recovered", "", 0)
+        mock_execute_bg.return_value = 12345
+        mock_get_output.return_value = ("completed", "recovered", "", 0)
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -63,14 +77,14 @@ class TestCoreIntegration:
         mock_ctx.error = AsyncMock()
 
         # First attempt should fail gracefully
-        cmd1 = SSHCommand(command="ls", host="failing-host")
-        result1 = await execute_command(cmd1, mock_ctx)
+        request1 = CommandRequest(command="ls", host="failing-host")
+        result1 = await execute_command(request1, mock_ctx)
         assert result1.success is False
-        assert "Failed to connect to host 'failing-host'" in result1.stderr
+        assert "Failed to establish SSH connection" in result1.error_message
 
         # Second attempt should succeed
-        cmd2 = SSHCommand(command="ls", host="working-host")
-        result2 = await execute_command(cmd2, mock_ctx)
+        request2 = CommandRequest(command="ls", host="working-host")
+        result2 = await execute_command(request2, mock_ctx)
         assert result2.success is True
         assert result2.stdout == "recovered"
 

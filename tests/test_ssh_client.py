@@ -163,7 +163,9 @@ class TestSSHClient:
         assert stdout == "command output"
         assert stderr == ""
         assert exit_code == 0
-        mock_ssh_client.exec_command.assert_called_once_with("ls -la", get_pty=False)
+        mock_ssh_client.exec_command.assert_called_once_with(
+            "ls -la", get_pty=False, timeout=60
+        )
 
     def test_execute_ssh_command_with_stderr(self):
         """Test SSH command execution with stderr output"""
@@ -219,11 +221,12 @@ class TestSSHClient:
         assert stdout == "Special chars: !@#$%^&*(){}[]|\\;:'\",<>.?/"
         assert stderr == ""
         assert exit_code == 0
-        
+
         # Verify that the command was executed with proper shell handling
         mock_client.exec_command.assert_called_once()
         call_args = mock_client.exec_command.call_args
-        assert call_args[1]['get_pty'] is False
+        assert call_args[1]["get_pty"] is False
+        assert call_args[1]["timeout"] == 60
 
 
 class TestCommandHandling:
@@ -232,12 +235,12 @@ class TestCommandHandling:
     def test_is_simple_command(self):
         """Test detection of simple commands"""
         from mcp_ssh.ssh import _is_simple_command
-        
+
         # Simple commands
         assert _is_simple_command("ls -la") is True
         assert _is_simple_command("echo hello") is True
         assert _is_simple_command("cat file.txt") is True
-        
+
         # Commands with shell features
         assert _is_simple_command("ls | grep test") is False
         assert _is_simple_command("echo $HOME") is False
@@ -247,25 +250,25 @@ class TestCommandHandling:
 
     def test_prepare_shell_command(self):
         """Test shell command preparation"""
-        from mcp_ssh.ssh import _prepare_shell_command, _has_complex_quoting
-        
+        from mcp_ssh.ssh import _has_complex_quoting, _prepare_shell_command
+
         # Test with special characters
         command = "echo 'Special chars: !@#$%^&*(){}[]|\\;:'\",<>.?/'"
         safe_command = _prepare_shell_command(command)
-        
+
         # Should be wrapped in bash -c with proper quoting
         assert safe_command.startswith("bash -c ")
         assert "echo" in safe_command
-        
+
         # Test with complex quoting (printf command from user's example)
         complex_command = "printf 'Special chars: !@#$%^&*(){}[]|\\\\;:\\'\\\"\\,<>.?/'"
         assert _has_complex_quoting(complex_command) is True
         safe_complex = _prepare_shell_command(complex_command)
-        
+
         # Should use heredoc approach for complex quoting
         assert safe_complex.startswith("bash << '")
         assert "printf" in safe_complex
-        
+
         # Test with simple command
         simple_command = "ls -la"
         safe_simple = _prepare_shell_command(simple_command)
@@ -274,17 +277,26 @@ class TestCommandHandling:
     def test_has_complex_quoting(self):
         """Test detection of complex quoting patterns"""
         from mcp_ssh.ssh import _has_complex_quoting
-        
+
         # Commands with complex quoting (escaped quotes)
         assert _has_complex_quoting("echo 'Escaped \\' quote'") is True
-        assert _has_complex_quoting("echo \"Escaped \\\" quote\"") is True
-        assert _has_complex_quoting("printf 'Special chars: !@#$%^&*(){}[]|\\\\;:\\'\\\"\\,<>.?/'") is True
-        
+        assert _has_complex_quoting('echo "Escaped \\" quote"') is True
+        assert (
+            _has_complex_quoting(
+                "printf 'Special chars: !@#$%^&*(){}[]|\\\\;:\\'\\\"\\,<>.?/'"
+            )
+            is True
+        )
+
         # Commands without complex quoting
         assert _has_complex_quoting("echo 'Simple quotes'") is False
-        assert _has_complex_quoting("echo \"Simple quotes\"") is False
-        assert _has_complex_quoting("echo 'Mixed \"quotes'") is False  # Not detected as complex
-        assert _has_complex_quoting("echo \"Mixed 'quotes\"") is False  # Not detected as complex
+        assert _has_complex_quoting('echo "Simple quotes"') is False
+        assert (
+            _has_complex_quoting("echo 'Mixed \"quotes'") is False
+        )  # Not detected as complex
+        assert (
+            _has_complex_quoting('echo "Mixed \'quotes"') is False
+        )  # Not detected as complex
         assert _has_complex_quoting("ls -la") is False
         assert _has_complex_quoting("echo $HOME") is False
 
@@ -299,17 +311,17 @@ class TestFileTransfer:
         mock_client = MagicMock()
         mock_exists.return_value = True
         mock_isfile.return_value = True
-        
+
         # Mock SCP operations
         mock_scp = MagicMock()
         mock_client.open_sftp.return_value = mock_scp
-        
+
         # Mock file size calculation
         with patch("os.path.getsize", return_value=1024):
             bytes_transferred = transfer_file_scp(
                 mock_client, "/tmp/test.txt", "/home/user/test.txt", "upload"
             )
-        
+
         assert bytes_transferred == 1024
         mock_exists.assert_called_once_with("/tmp/test.txt")
         mock_isfile.assert_called_once_with("/tmp/test.txt")
@@ -321,12 +333,14 @@ class TestFileTransfer:
         """Test file upload when source file doesn't exist"""
         mock_client = MagicMock()
         mock_exists.return_value = False
-        
-        with pytest.raises(FileNotFoundError, match="Local file does not exist: /tmp/nonexistent.txt"):
+
+        with pytest.raises(
+            FileNotFoundError, match="Local file does not exist: /tmp/nonexistent.txt"
+        ):
             transfer_file_scp(
                 mock_client, "/tmp/nonexistent.txt", "/home/user/test.txt", "upload"
             )
-        
+
         mock_exists.assert_called_once_with("/tmp/nonexistent.txt")
 
     @patch("os.path.exists")
@@ -336,52 +350,62 @@ class TestFileTransfer:
         mock_client = MagicMock()
         mock_exists.return_value = True
         mock_isfile.return_value = False
-        
-        with pytest.raises(ValueError, match="Local path is not a file: /tmp/directory"):
+
+        with pytest.raises(
+            ValueError, match="Local path is not a file: /tmp/directory"
+        ):
             transfer_file_scp(
                 mock_client, "/tmp/directory", "/home/user/test.txt", "upload"
             )
-        
+
         mock_exists.assert_called_once_with("/tmp/directory")
         mock_isfile.assert_called_once_with("/tmp/directory")
 
     def test_transfer_file_download_success(self):
         """Test successful file download with remote source validation"""
         mock_client = MagicMock()
-        
+
         # Mock SFTP for remote file check and SCP operations
         mock_sftp = MagicMock()
         mock_client.open_sftp.return_value = mock_sftp
-        
+
         # Mock file size calculation
         with patch("os.path.getsize", return_value=2048):
             bytes_transferred = transfer_file_scp(
                 mock_client, "/tmp/download.txt", "/home/user/remote.txt", "download"
             )
-        
+
         assert bytes_transferred == 2048
         # Verify remote file was checked
         mock_sftp.stat.assert_called_once_with("/home/user/remote.txt")
         # Should be called twice: once for stat check, once for transfer
         assert mock_sftp.close.call_count == 2
-        mock_sftp.get.assert_called_once_with("/home/user/remote.txt", "/tmp/download.txt")
+        mock_sftp.get.assert_called_once_with(
+            "/home/user/remote.txt", "/tmp/download.txt"
+        )
         # Should be called twice: once for stat check, once for transfer
         assert mock_client.open_sftp.call_count == 2
 
     def test_transfer_file_download_remote_not_exists(self):
         """Test file download when remote file doesn't exist"""
         mock_client = MagicMock()
-        
+
         # Mock SFTP for remote file check - simulate FileNotFoundError
         mock_sftp = MagicMock()
         mock_sftp.stat.side_effect = FileNotFoundError("File not found")
         mock_client.open_sftp.return_value = mock_sftp
-        
-        with pytest.raises(FileNotFoundError, match="Remote file does not exist: /home/user/nonexistent.txt"):
+
+        with pytest.raises(
+            FileNotFoundError,
+            match="Remote file does not exist: /home/user/nonexistent.txt",
+        ):
             transfer_file_scp(
-                mock_client, "/tmp/download.txt", "/home/user/nonexistent.txt", "download"
+                mock_client,
+                "/tmp/download.txt",
+                "/home/user/nonexistent.txt",
+                "download",
             )
-        
+
         mock_sftp.stat.assert_called_once_with("/home/user/nonexistent.txt")
         mock_sftp.close.assert_called_once()
         # Should only be called once for the stat check
@@ -390,8 +414,10 @@ class TestFileTransfer:
     def test_transfer_file_invalid_direction(self):
         """Test file transfer with invalid direction"""
         mock_client = MagicMock()
-        
-        with pytest.raises(ValueError, match="Invalid direction: invalid. Use 'upload' or 'download'"):
+
+        with pytest.raises(
+            ValueError, match="Invalid direction: invalid. Use 'upload' or 'download'"
+        ):
             transfer_file_scp(
                 mock_client, "/tmp/test.txt", "/home/user/test.txt", "invalid"
             )
@@ -403,17 +429,17 @@ class TestFileTransfer:
         mock_client = MagicMock()
         mock_exists.return_value = True
         mock_isfile.return_value = True
-        
+
         # Mock SCP operations to raise exception
         mock_scp = MagicMock()
         mock_scp.put.side_effect = Exception("Network error")
         mock_client.open_sftp.return_value = mock_scp
-        
+
         with pytest.raises(Exception, match="Network error"):
             transfer_file_scp(
                 mock_client, "/tmp/test.txt", "/home/user/test.txt", "upload"
             )
-        
+
         mock_scp.put.assert_called_once_with("/tmp/test.txt", "/home/user/test.txt")
         # close() should be called even when exception occurs
         mock_scp.close.assert_called_once()
@@ -421,24 +447,408 @@ class TestFileTransfer:
     def test_transfer_file_download_exception_handling(self):
         """Test file download exception handling"""
         mock_client = MagicMock()
-        
+
         # Mock SFTP for remote file check
         mock_sftp = MagicMock()
         # Mock SCP operations to raise exception
         mock_scp = MagicMock()
         mock_scp.get.side_effect = Exception("Network error")
-        
+
         # Return different mocks for each call
         mock_client.open_sftp.side_effect = [mock_sftp, mock_scp]
-        
+
         with pytest.raises(Exception, match="Network error"):
             transfer_file_scp(
                 mock_client, "/tmp/download.txt", "/home/user/remote.txt", "download"
             )
-        
+
         # Should be called once for stat check
         mock_sftp.stat.assert_called_once_with("/home/user/remote.txt")
         mock_sftp.close.assert_called_once()
         # Should be called once for transfer attempt
-        mock_scp.get.assert_called_once_with("/home/user/remote.txt", "/tmp/download.txt")
+        mock_scp.get.assert_called_once_with(
+            "/home/user/remote.txt", "/tmp/download.txt"
+        )
         mock_scp.close.assert_called_once()
+
+
+class TestBackgroundExecution:
+    """Test background execution functionality"""
+
+    def test_execute_command_background_success(self):
+        """Test successful background command execution"""
+        from mcp_ssh.ssh import execute_command_background
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        mock_stdout.read.return_value = b"12345\n"
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        pid = execute_command_background(
+            mock_client, "ls -la", "/tmp/test.out", "/tmp/test.err"
+        )
+
+        assert pid == 12345
+        mock_client.exec_command.assert_called_once()
+        call_args = mock_client.exec_command.call_args[0][0]
+        # Check that timeout was passed
+        assert mock_client.exec_command.call_args[1]["timeout"] == 60
+        assert "nohup bash -c" in call_args
+        assert "ls -la" in call_args
+        assert "/tmp/test.out" in call_args
+        assert "/tmp/test.err" in call_args
+        assert "echo $!" in call_args
+
+    def test_execute_command_background_invalid_pid(self):
+        """Test background command execution with invalid PID response"""
+        from mcp_ssh.ssh import execute_command_background
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        mock_stdout.read.return_value = b"invalid\n"
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        with pytest.raises(RuntimeError, match="Failed to get PID"):
+            execute_command_background(
+                mock_client, "ls -la", "/tmp/test.out", "/tmp/test.err"
+            )
+
+    def test_get_process_output_running(self):
+        """Test getting output from running process"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import get_process_output
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock status check - process is running
+        mock_stdout.read.side_effect = [b"RUNNING\n", b"output data", b"error data"]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        status, output, errors, exit_code = get_process_output(
+            mock_client, process, 1000
+        )
+
+        assert status == "running"
+        assert output == "output data"
+        assert errors == "error data"
+        assert exit_code is None
+
+        # Verify the commands executed
+        calls = mock_client.exec_command.call_args_list
+        assert len(calls) == 3
+        assert "kill -0 12345" in calls[0][0][0]
+        assert "head -c 1000 /tmp/test.out" in calls[1][0][0]
+        assert "head -c 500 /tmp/test.err" in calls[2][0][0]
+
+    def test_get_process_output_completed(self):
+        """Test getting output from completed process"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import get_process_output
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock status check - process is stopped, exit code 0
+        mock_stdout.read.side_effect = [
+            b"STOPPED\n",
+            b"0\n",
+            b"output data",
+            b"error data",
+        ]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        status, output, errors, exit_code = get_process_output(
+            mock_client, process, 1000
+        )
+
+        assert status == "completed"
+        assert output == "output data"
+        assert errors == "error data"
+        assert exit_code == 0
+
+    def test_get_output_chunk_success(self):
+        """Test getting specific chunk of output"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import get_output_chunk
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock chunk retrieval - has more data
+        mock_stdout.read.side_effect = [b"chunk data", b"x"]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        chunk, has_more = get_output_chunk(mock_client, process, 100, 50)
+
+        assert chunk == "chunk data"
+        assert has_more is True
+
+        # Verify the commands executed
+        calls = mock_client.exec_command.call_args_list
+        assert len(calls) == 2
+        assert "tail -c +101 /tmp/test.out" in calls[0][0][0]
+        assert "head -c 50" in calls[0][0][0]
+        assert "tail -c +151 /tmp/test.out" in calls[1][0][0]
+
+    def test_get_output_chunk_no_more_data(self):
+        """Test getting chunk when no more data available"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import get_output_chunk
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock chunk retrieval - no more data
+        mock_stdout.read.side_effect = [b"chunk data", b""]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        chunk, has_more = get_output_chunk(mock_client, process, 100, 50)
+
+        assert chunk == "chunk data"
+        assert has_more is False
+
+    def test_kill_background_process_success_graceful(self):
+        """Test successful graceful process termination"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import kill_background_process
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock graceful termination
+        mock_stdout.read.side_effect = [b"", b"STOPPED\n"]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="sleep 100",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        success, message = kill_background_process(mock_client, process)
+
+        assert success is True
+        assert "terminated gracefully" in message
+
+        # Verify the commands executed
+        calls = mock_client.exec_command.call_args_list
+        assert len(calls) == 2
+        assert "kill 12345" in calls[0][0][0]
+        assert "kill -0 12345" in calls[1][0][0]
+
+    def test_kill_background_process_success_force(self):
+        """Test successful force process termination"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import kill_background_process
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock force termination (graceful fails, force succeeds)
+        mock_stdout.read.side_effect = [b"", b"RUNNING\n", b"", b"STOPPED\n"]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="sleep 100",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        success, message = kill_background_process(mock_client, process)
+
+        assert success is True
+        assert "force killed" in message
+
+        # Verify the commands executed
+        calls = mock_client.exec_command.call_args_list
+        assert len(calls) == 4
+        assert "kill 12345" in calls[0][0][0]
+        assert "kill -0 12345" in calls[1][0][0]
+        assert "kill -9 12345" in calls[2][0][0]
+        assert "kill -0 12345" in calls[3][0][0]
+
+    def test_kill_background_process_failure(self):
+        """Test failed process termination"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import kill_background_process
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        # Mock failed termination
+        mock_stdout.read.side_effect = [
+            b"",
+            b"RUNNING\n",
+            b"Permission denied\n",
+            b"RUNNING\n",
+        ]
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="sleep 100",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        success, message = kill_background_process(mock_client, process)
+
+        assert success is False
+        assert "Permission denied" in message
+
+    def test_kill_background_process_no_pid(self):
+        """Test killing process with no PID"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import kill_background_process
+
+        mock_client = MagicMock()
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=None,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        success, message = kill_background_process(mock_client, process)
+
+        assert success is False
+        assert "No PID available" in message
+
+    def test_cleanup_process_files_success(self):
+        """Test successful cleanup of process files"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import cleanup_process_files
+
+        mock_client = MagicMock()
+        mock_stdin = MagicMock()
+        mock_stdout = MagicMock()
+        mock_stderr = MagicMock()
+
+        mock_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        result = cleanup_process_files(mock_client, process)
+
+        assert result is True
+        mock_client.exec_command.assert_called_once()
+        call_args = mock_client.exec_command.call_args[0][0]
+        # Check that timeout was passed
+        assert mock_client.exec_command.call_args[1]["timeout"] == 60
+        assert "rm -f /tmp/test.out /tmp/test.err /tmp/test.out.exit" in call_args
+
+    def test_cleanup_process_files_failure(self):
+        """Test failed cleanup of process files"""
+        from mcp_ssh.background import BackgroundProcess
+        from mcp_ssh.ssh import cleanup_process_files
+
+        mock_client = MagicMock()
+        mock_client.exec_command.side_effect = Exception("Connection lost")
+
+        process = BackgroundProcess(
+            process_id="test123",
+            host="test-host",
+            command="ls -la",
+            pid=12345,
+            start_time=None,
+            status="running",
+            output_file="/tmp/test.out",
+            error_file="/tmp/test.err",
+        )
+
+        result = cleanup_process_files(mock_client, process)
+
+        assert result is False

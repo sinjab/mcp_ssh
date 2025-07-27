@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from mcp_ssh.server import (
+    CommandRequest,
     CommandResult,
     FileTransferRequest,
     FileTransferResult,
@@ -26,14 +27,18 @@ class TestMCPTools:
     """Test MCP tool functions"""
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    @patch("mcp_ssh.server.execute_ssh_command")
+    @patch("mcp_ssh.server.execute_command_background")
+    @patch("mcp_ssh.server.get_process_output")
     @pytest.mark.asyncio
-    async def test_execute_command_success(self, mock_exec, mock_client):
+    async def test_execute_command_success(
+        self, mock_get_output, mock_execute_bg, mock_client
+    ):
         """Test successful command execution"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("command output", "", 0)
+        mock_execute_bg.return_value = 12345
+        mock_get_output.return_value = ("completed", "command output", "", 0)
 
-        cmd = SSHCommand(command="ls -la", host="test-host")
+        request = CommandRequest(command="ls -la", host="test-host")
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -42,15 +47,15 @@ class TestMCPTools:
         mock_ctx.debug = AsyncMock()
         mock_ctx.error = AsyncMock()
 
-        result = await execute_command(cmd, mock_ctx)
+        result = await execute_command(request, mock_ctx)
 
         assert isinstance(result, CommandResult)
         assert result.success is True
         assert result.stdout == "command output"
         assert result.stderr == ""
         assert result.exit_code == 0
-        assert result.host == "test-host"
-        assert result.command == "ls -la"
+        assert result.process_id != ""
+        assert result.status == "completed"
         mock_client.assert_called_once_with("test-host")
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
@@ -59,7 +64,7 @@ class TestMCPTools:
         """Test command execution when host connection fails"""
         mock_client.return_value = None
 
-        cmd = SSHCommand(command="ls", host="nonexistent")
+        request = CommandRequest(command="ls", host="nonexistent")
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -68,22 +73,30 @@ class TestMCPTools:
         mock_ctx.debug = AsyncMock()
         mock_ctx.error = AsyncMock()
 
-        result = await execute_command(cmd, mock_ctx)
+        result = await execute_command(request, mock_ctx)
 
         assert isinstance(result, CommandResult)
         assert result.success is False
-        assert "Failed to connect to host 'nonexistent'" in result.stderr
-        assert "Please check your SSH config" in result.stderr
+        assert "Failed to establish SSH connection" in result.error_message
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    @patch("mcp_ssh.server.execute_ssh_command")
+    @patch("mcp_ssh.server.execute_command_background")
+    @patch("mcp_ssh.server.get_process_output")
     @pytest.mark.asyncio
-    async def test_execute_command_with_stderr(self, mock_exec, mock_client):
+    async def test_execute_command_with_stderr(
+        self, mock_get_output, mock_execute_bg, mock_client
+    ):
         """Test command execution with stderr output"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("stdout output", "stderr output", 0)
+        mock_execute_bg.return_value = 12345
+        mock_get_output.return_value = (
+            "completed",
+            "stdout output",
+            "stderr output",
+            0,
+        )
 
-        cmd = SSHCommand(command="ls /nonexistent", host="test-host")
+        request = CommandRequest(command="ls /nonexistent", host="test-host")
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -92,7 +105,7 @@ class TestMCPTools:
         mock_ctx.debug = AsyncMock()
         mock_ctx.error = AsyncMock()
 
-        result = await execute_command(cmd, mock_ctx)
+        result = await execute_command(request, mock_ctx)
 
         assert isinstance(result, CommandResult)
         assert result.success is True
@@ -101,14 +114,18 @@ class TestMCPTools:
         assert result.exit_code == 0
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    @patch("mcp_ssh.server.execute_ssh_command")
+    @patch("mcp_ssh.server.execute_command_background")
+    @patch("mcp_ssh.server.get_process_output")
     @pytest.mark.asyncio
-    async def test_execute_command_no_output(self, mock_exec, mock_client):
+    async def test_execute_command_no_output(
+        self, mock_get_output, mock_execute_bg, mock_client
+    ):
         """Test command execution with no output"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("", "", 0)
+        mock_execute_bg.return_value = 12345
+        mock_get_output.return_value = ("completed", "", "", 0)
 
-        cmd = SSHCommand(command="touch /tmp/test", host="test-host")
+        request = CommandRequest(command="touch /tmp/test", host="test-host")
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -117,7 +134,7 @@ class TestMCPTools:
         mock_ctx.debug = AsyncMock()
         mock_ctx.error = AsyncMock()
 
-        result = await execute_command(cmd, mock_ctx)
+        result = await execute_command(request, mock_ctx)
 
         assert isinstance(result, CommandResult)
         assert result.success is True
@@ -126,14 +143,18 @@ class TestMCPTools:
         assert result.exit_code == 0
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
-    @patch("mcp_ssh.server.execute_ssh_command")
+    @patch("mcp_ssh.server.execute_command_background")
+    @patch("mcp_ssh.server.get_process_output")
     @pytest.mark.asyncio
-    async def test_execute_command_only_stderr(self, mock_exec, mock_client):
+    async def test_execute_command_only_stderr(
+        self, mock_get_output, mock_execute_bg, mock_client
+    ):
         """Test command execution with only stderr output"""
         mock_client.return_value = MagicMock()
-        mock_exec.return_value = ("", "error only", 1)
+        mock_execute_bg.return_value = 12345
+        mock_get_output.return_value = ("completed", "", "error only", 1)
 
-        cmd = SSHCommand(command="invalid-command", host="test-host")
+        request = CommandRequest(command="invalid-command", host="test-host")
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -142,7 +163,7 @@ class TestMCPTools:
         mock_ctx.debug = AsyncMock()
         mock_ctx.error = AsyncMock()
 
-        result = await execute_command(cmd, mock_ctx)
+        result = await execute_command(request, mock_ctx)
 
         assert isinstance(result, CommandResult)
         assert result.success is True  # Command executed, just returned error
@@ -166,7 +187,7 @@ class TestFileTransfer:
             host="test-host",
             local_path="/tmp/test.txt",
             remote_path="/home/user/test.txt",
-            direction="upload"
+            direction="upload",
         )
 
         # Mock context with async methods
@@ -184,7 +205,7 @@ class TestFileTransfer:
         assert result.remote_path == "/home/user/test.txt"
         assert result.host == "test-host"
         assert result.error_message == ""
-        
+
         # Verify transfer was called with correct parameters
         mock_transfer.assert_called_once_with(
             mock_client.return_value, "/tmp/test.txt", "/home/user/test.txt", "upload"
@@ -193,17 +214,21 @@ class TestFileTransfer:
     @patch("mcp_ssh.server.get_ssh_client_from_config")
     @patch("mcp_ssh.ssh.transfer_file_scp")
     @pytest.mark.asyncio
-    async def test_transfer_file_upload_source_not_exists(self, mock_transfer, mock_client):
+    async def test_transfer_file_upload_source_not_exists(
+        self, mock_transfer, mock_client
+    ):
         """Test file upload when source file doesn't exist"""
         mock_client.return_value = MagicMock()
         # Simulate FileNotFoundError from transfer_file_scp
-        mock_transfer.side_effect = FileNotFoundError("Local file does not exist: /tmp/nonexistent.txt")
+        mock_transfer.side_effect = FileNotFoundError(
+            "Local file does not exist: /tmp/nonexistent.txt"
+        )
 
         request = FileTransferRequest(
             host="test-host",
             local_path="/tmp/nonexistent.txt",
             remote_path="/home/user/test.txt",
-            direction="upload"
+            direction="upload",
         )
 
         # Mock context with async methods
@@ -220,24 +245,28 @@ class TestFileTransfer:
         assert result.local_path == "/tmp/nonexistent.txt"
         assert result.remote_path == "/home/user/test.txt"
         assert result.host == "test-host"
-        
+
         # Verify transfer was attempted
         mock_transfer.assert_called_once()
 
     @patch("mcp_ssh.server.get_ssh_client_from_config")
     @patch("mcp_ssh.ssh.transfer_file_scp")
     @pytest.mark.asyncio
-    async def test_transfer_file_upload_source_not_file(self, mock_transfer, mock_client):
+    async def test_transfer_file_upload_source_not_file(
+        self, mock_transfer, mock_client
+    ):
         """Test file upload when source path is not a file"""
         mock_client.return_value = MagicMock()
         # Simulate ValueError from transfer_file_scp
-        mock_transfer.side_effect = ValueError("Local path is not a file: /tmp/directory")
+        mock_transfer.side_effect = ValueError(
+            "Local path is not a file: /tmp/directory"
+        )
 
         request = FileTransferRequest(
             host="test-host",
             local_path="/tmp/directory",
             remote_path="/home/user/test.txt",
-            direction="upload"
+            direction="upload",
         )
 
         # Mock context with async methods
@@ -254,7 +283,7 @@ class TestFileTransfer:
         assert result.local_path == "/tmp/directory"
         assert result.remote_path == "/home/user/test.txt"
         assert result.host == "test-host"
-        
+
         # Verify transfer was attempted
         mock_transfer.assert_called_once()
 
@@ -270,7 +299,7 @@ class TestFileTransfer:
             host="test-host",
             local_path="/tmp/download.txt",
             remote_path="/home/user/remote.txt",
-            direction="download"
+            direction="download",
         )
 
         # Mock context with async methods
@@ -292,17 +321,21 @@ class TestFileTransfer:
     @patch("mcp_ssh.server.get_ssh_client_from_config")
     @patch("mcp_ssh.ssh.transfer_file_scp")
     @pytest.mark.asyncio
-    async def test_transfer_file_download_remote_not_exists(self, mock_transfer, mock_client):
+    async def test_transfer_file_download_remote_not_exists(
+        self, mock_transfer, mock_client
+    ):
         """Test file download when remote file doesn't exist"""
         mock_client.return_value = MagicMock()
         # Simulate FileNotFoundError from remote file check
-        mock_transfer.side_effect = FileNotFoundError("Remote file does not exist: /home/user/nonexistent.txt")
+        mock_transfer.side_effect = FileNotFoundError(
+            "Remote file does not exist: /home/user/nonexistent.txt"
+        )
 
         request = FileTransferRequest(
             host="test-host",
             local_path="/tmp/download.txt",
             remote_path="/home/user/nonexistent.txt",
-            direction="download"
+            direction="download",
         )
 
         # Mock context with async methods
@@ -330,7 +363,7 @@ class TestFileTransfer:
             host="nonexistent-host",
             local_path="/tmp/test.txt",
             remote_path="/home/user/test.txt",
-            direction="upload"
+            direction="upload",
         )
 
         # Mock context with async methods
@@ -353,7 +386,9 @@ class TestFileTransfer:
     @patch("os.path.exists")
     @patch("os.path.isfile")
     @pytest.mark.asyncio
-    async def test_transfer_file_transfer_exception(self, mock_isfile, mock_exists, mock_transfer, mock_client):
+    async def test_transfer_file_transfer_exception(
+        self, mock_isfile, mock_exists, mock_transfer, mock_client
+    ):
         """Test file transfer when transfer operation fails"""
         mock_client.return_value = MagicMock()
         mock_exists.return_value = True
@@ -364,7 +399,7 @@ class TestFileTransfer:
             host="test-host",
             local_path="/tmp/test.txt",
             remote_path="/home/user/test.txt",
-            direction="upload"
+            direction="upload",
         )
 
         # Mock context with async methods
@@ -440,19 +475,19 @@ class TestMCPResources:
 
         assert isinstance(result, list)
         assert len(result) == 3
-        
+
         # Check production host
         prod_host = next(h for h in result if h.name == "production")
         assert prod_host.hostname == "prod.example.com"
         assert prod_host.user == "deploy"
         assert prod_host.port == 2222
-        
+
         # Check staging host
         staging_host = next(h for h in result if h.name == "staging")
         assert staging_host.hostname == "staging.example.com"
         assert staging_host.user == "ubuntu"
         assert staging_host.port == 2222
-        
+
         # Check development host
         dev_host = next(h for h in result if h.name == "development")
         assert dev_host.hostname == "dev.example.com"
@@ -568,7 +603,7 @@ class TestErrorHandling:
         """Test command execution when an exception occurs"""
         mock_get_client.side_effect = Exception("Unexpected error")
 
-        cmd = SSHCommand(command="ls", host="error-host")
+        request = CommandRequest(command="ls", host="error-host")
 
         # Mock context with async methods
         mock_ctx = MagicMock()
@@ -578,10 +613,10 @@ class TestErrorHandling:
         mock_ctx.error = AsyncMock()
 
         # The function should handle the exception and return a CommandResult
-        result = await execute_command(cmd, mock_ctx)
+        result = await execute_command(request, mock_ctx)
         assert isinstance(result, CommandResult)
         assert result.success is False
-        assert "Unexpected error" in result.stderr
+        assert "Unexpected error" in result.error_message
 
     @patch("mcp_ssh.ssh.parse_ssh_config")
     def test_list_hosts_with_exception(self, mock_parse):

@@ -33,12 +33,48 @@ uv run mcp dev src/mcp_ssh/server.py
 
 | Type | Name | Description |
 |------|------|-------------|
-| **Tool** | `execute_command` | Execute commands on remote SSH hosts with structured output |
+| **Tool** | `execute_command` | Execute commands in background on remote SSH hosts with process tracking |
+| **Tool** | `get_command_output` | Retrieve output from background commands with chunking support |
+| **Tool** | `get_command_status` | Check status of background commands without retrieving output |
+| **Tool** | `kill_command` | Kill running background processes with graceful termination and cleanup |
 | **Tool** | `transfer_file` | Upload/download files via SCP with progress tracking |
 | **Resource** | `ssh://hosts` | List all configured SSH hosts with detailed info |
 | **Prompt** | `ssh_help` | Interactive guidance for SSH operations |
 
 ## Configuration
+
+### Background Execution Settings
+
+Set these environment variables to control background execution behavior:
+
+```bash
+# Maximum output size before chunking (default: 50000 bytes = 50KB)
+export MCP_SSH_MAX_OUTPUT_SIZE=50000
+
+# Time to wait for quick commands to complete (default: 5 seconds)
+export MCP_SSH_QUICK_WAIT_TIME=5
+
+# Default chunk size for get_command_output (default: 10000 bytes = 10KB)
+export MCP_SSH_CHUNK_SIZE=10000
+```
+
+### Timeout Configuration
+
+Set these environment variables to control timeout behavior and prevent hanging operations:
+
+```bash
+# SSH connection timeout in seconds (default: 30)
+export MCP_SSH_CONNECT_TIMEOUT=30
+
+# SSH command execution timeout in seconds (default: 60)
+export MCP_SSH_COMMAND_TIMEOUT=60
+
+# File transfer timeout in seconds (default: 300 = 5 minutes)
+export MCP_SSH_TRANSFER_TIMEOUT=300
+
+# Output reading timeout in seconds (default: 30)
+export MCP_SSH_READ_TIMEOUT=30
+```
 
 ### Client Setup (Claude Desktop)
 ```json
@@ -123,6 +159,49 @@ mcp_ssh/
 
 ## Usage Examples
 
+### Background Execution Workflow
+
+```python
+# 1. Start command in background
+result = await execute_command({
+    "host": "server1", 
+    "command": "find / -name '*.log'"
+})
+
+print(f"Process ID: {result.process_id}")
+print(f"Status: {result.status}")
+print(f"Output: {result.stdout}")
+
+# 2. Check status later
+status = await get_command_status({
+    "process_id": result.process_id
+})
+
+# 3. Kill command if needed
+if status.status == "running":
+    kill_result = await kill_command({
+        "process_id": result.process_id,
+        "cleanup_files": True
+    })
+    print(f"Kill result: {kill_result.message}")
+
+if status.status == "completed":
+    # 4. Get output in chunks if needed
+    if result.has_more_output:
+        chunk1 = await get_command_output({
+            "process_id": result.process_id,
+            "start_byte": 0,
+            "chunk_size": 10000
+        })
+        
+        if chunk1.has_more_output:
+            chunk2 = await get_command_output({
+                "process_id": result.process_id,
+                "start_byte": 10000,
+                "chunk_size": 10000
+            })
+```
+
 ### Programmatic API
 ```python
 from mcp_ssh.ssh import get_ssh_client_from_config, execute_ssh_command
@@ -137,12 +216,12 @@ if client:
 
 ### MCP Tool Usage
 ```python
-from mcp_ssh.server import SSHCommand, execute_command
+from mcp_ssh.server import CommandRequest, execute_command
 
-# Execute via MCP
-cmd = SSHCommand(command="df -h", host="production")
-result = execute_command(cmd)
-print(result)  # Structured output with stdout/stderr
+# Execute via MCP (background execution)
+request = CommandRequest(command="df -h", host="production")
+result = await execute_command(request)
+print(result)  # Structured output with process_id and status
 ```
 
 ## Troubleshooting

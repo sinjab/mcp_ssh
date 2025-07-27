@@ -1,7 +1,38 @@
+import asyncio
+import os
+import time
+from datetime import datetime
+
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
-from mcp_ssh.ssh import execute_ssh_command, get_ssh_client_from_config
+from mcp_ssh.ssh import get_ssh_client_from_config
+
+from .background import process_manager
+from .ssh import (
+    cleanup_process_files,
+    execute_command_background,
+    get_output_chunk,
+    get_process_output,
+    kill_background_process,
+)
+
+# Configuration from environment variables
+MAX_OUTPUT_SIZE = int(os.getenv("MCP_SSH_MAX_OUTPUT_SIZE", "50000"))  # 50KB default
+QUICK_WAIT_TIME = int(os.getenv("MCP_SSH_QUICK_WAIT_TIME", "5"))  # 5 seconds default
+CHUNK_SIZE = int(os.getenv("MCP_SSH_CHUNK_SIZE", "10000"))  # 10KB chunks default
+
+# Timeout configuration
+SSH_CONNECT_TIMEOUT = int(
+    os.getenv("MCP_SSH_CONNECT_TIMEOUT", "30")
+)  # 30 seconds default
+SSH_COMMAND_TIMEOUT = int(
+    os.getenv("MCP_SSH_COMMAND_TIMEOUT", "60")
+)  # 60 seconds default
+SSH_TRANSFER_TIMEOUT = int(
+    os.getenv("MCP_SSH_TRANSFER_TIMEOUT", "300")
+)  # 5 minutes default
+SSH_READ_TIMEOUT = int(os.getenv("MCP_SSH_READ_TIMEOUT", "30"))  # 30 seconds default
 
 
 class SSHCommand(BaseModel):
@@ -11,15 +42,43 @@ class SSHCommand(BaseModel):
     host: str = Field(..., description="Host to execute command on", min_length=1)
 
 
-class CommandResult(BaseModel):
-    """Structured SSH command result"""
+class CommandRequest(BaseModel):
+    host: str = Field(..., min_length=1, max_length=253)
+    command: str = Field(..., min_length=1, max_length=2000)
 
-    success: bool = Field(..., description="Whether command executed successfully")
-    stdout: str = Field(default="", description="Standard output from command")
-    stderr: str = Field(default="", description="Standard error from command")
-    exit_code: int | None = Field(default=None, description="Command exit code")
-    host: str = Field(..., description="Host where command was executed")
-    command: str = Field(..., description="Command that was executed")
+
+class CommandResult(BaseModel):
+    success: bool
+    process_id: str
+    status: str  # 'running', 'completed', 'failed'
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int | None = None
+    execution_time: float = 0.0
+    output_size: int = 0
+    has_more_output: bool = False
+    chunk_start: int = 0
+    error_message: str = ""
+
+
+class GetOutputRequest(BaseModel):
+    process_id: str = Field(..., min_length=1, max_length=50)
+    start_byte: int = Field(default=0, ge=0)
+    chunk_size: int | None = Field(default=None, ge=1, le=100000)
+
+
+class KillProcessRequest(BaseModel):
+    process_id: str = Field(..., min_length=1, max_length=50)
+    cleanup_files: bool = Field(
+        default=True, description="Whether to cleanup temporary files"
+    )
+
+
+class KillProcessResult(BaseModel):
+    success: bool
+    process_id: str
+    message: str = ""
+    error_message: str = ""
 
 
 class FileTransferRequest(BaseModel):
@@ -58,47 +117,369 @@ mcp = FastMCP("MCP SSH Server")
 
 
 @mcp.tool()
-async def execute_command(cmd: SSHCommand, ctx: Context) -> CommandResult:
-    """Execute a command on the SSH server with structured output and progress tracking"""
-    await ctx.info(f"Connecting to host: {cmd.host}")
+async def execute_command(request: CommandRequest, ctx: Context) -> CommandResult:
+    """
+    Execute SSH command in background. Always returns immediately with process_id.
+
+    Waits briefly for quick commands to complete, then returns current status.
+    Use get_command_output to retrieve more data if needed.
+    """
+    client = None
+    start_time = time.time()
 
     try:
-        await ctx.report_progress(0.3, message="Establishing SSH connection...")
-        client = get_ssh_client_from_config(cmd.host)
+        await ctx.info(f"Starting command on {request.host}")
 
-        if client is None:
-            await ctx.error(f"Failed to connect to host '{cmd.host}'")
+        # Get SSH connection
+        client = get_ssh_client_from_config(request.host)
+        if not client:
             return CommandResult(
                 success=False,
-                stderr=f"Failed to connect to host '{cmd.host}'. Please check your SSH config.",
-                host=cmd.host,
-                command=cmd.command,
+                process_id="",
+                status="failed",
+                error_message="Failed to establish SSH connection",
             )
 
-        await ctx.report_progress(0.7, message="Executing command...")
-        await ctx.debug(f"Executing: {cmd.command}")
-        stdout, stderr, exit_code = execute_ssh_command(client, cmd.command)
-        client.close()
+        # Start background process tracking
+        process_id = process_manager.start_process(request.host, request.command)
+        process = process_manager.get_process(process_id)
 
-        await ctx.report_progress(1.0, message="Command completed")
-        await ctx.info(f"Command executed successfully on {cmd.host}")
+        if not process:
+            raise RuntimeError("Failed to create process tracking")
+
+        await ctx.report_progress(0.3)
+
+        # Execute in background
+        pid = execute_command_background(
+            client, request.command, process.output_file, process.error_file
+        )
+
+        # Update process with PID
+        process_manager.update_process(process_id, pid=pid)
+
+        await ctx.report_progress(0.6)
+
+        # Wait briefly for quick commands with timeout
+        try:
+            await asyncio.wait_for(
+                asyncio.sleep(QUICK_WAIT_TIME), timeout=QUICK_WAIT_TIME + 5
+            )
+        except TimeoutError:
+            await ctx.warning(
+                f"Quick wait timed out after {QUICK_WAIT_TIME + 5} seconds"
+            )
+
+        # Check current status
+        status, output, errors, exit_code = get_process_output(
+            client, process, MAX_OUTPUT_SIZE
+        )
+
+        # Update process status
+        process_manager.update_process(process_id, status=status, exit_code=exit_code)
+
+        execution_time = time.time() - start_time
+
+        # Determine if output was truncated
+        output_size = len(output)
+        has_more = output_size >= MAX_OUTPUT_SIZE
+
+        await ctx.report_progress(1.0)
 
         return CommandResult(
             success=True,
-            stdout=stdout or "",
-            stderr=stderr or "",
+            process_id=process_id,
+            status=status,
+            stdout=output,
+            stderr=errors,
             exit_code=exit_code,
-            host=cmd.host,
-            command=cmd.command,
+            execution_time=execution_time,
+            output_size=output_size,
+            has_more_output=has_more,
+            chunk_start=0,
         )
+
     except Exception as e:
-        await ctx.error(f"Execution failed: {str(e)}")
+        execution_time = time.time() - start_time
+        await ctx.error(f"Command execution failed: {str(e)}")
         return CommandResult(
             success=False,
-            stderr=f"Failed to connect to host '{cmd.host}'. Error: {str(e)}",
-            host=cmd.host,
-            command=cmd.command,
+            process_id=process_id if "process_id" in locals() else "",
+            status="failed",
+            error_message=str(e),
+            execution_time=execution_time,
         )
+    finally:
+        if client:
+            client.close()
+
+
+@mcp.tool()
+async def get_command_output(request: GetOutputRequest, ctx: Context) -> CommandResult:
+    """
+    Get output from a background command, with optional chunking.
+
+    If chunk_size not specified, uses environment default.
+    Returns specific chunk starting from start_byte.
+    """
+    client = None
+
+    try:
+        process = process_manager.get_process(request.process_id)
+        if not process:
+            return CommandResult(
+                success=False,
+                process_id=request.process_id,
+                status="failed",
+                error_message=f"Process {request.process_id} not found",
+            )
+
+        await ctx.info(f"Getting output for process {request.process_id}")
+
+        # Get SSH connection
+        client = get_ssh_client_from_config(process.host)
+        if not client:
+            return CommandResult(
+                success=False,
+                process_id=request.process_id,
+                status="failed",
+                error_message="Failed to establish SSH connection",
+            )
+
+        chunk_size = request.chunk_size or CHUNK_SIZE
+
+        # Get specific chunk with timeout
+        try:
+            chunk, has_more = get_output_chunk(
+                client, process, request.start_byte, chunk_size
+            )
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                await ctx.warning(
+                    f"Output retrieval timed out after {SSH_READ_TIMEOUT} seconds"
+                )
+                return CommandResult(
+                    success=False,
+                    process_id=request.process_id,
+                    status="timeout",
+                    error_message=f"Output retrieval timed out: {str(e)}",
+                )
+            raise
+
+        # Check current status
+        status, _, errors, exit_code = get_process_output(
+            client, process, 1000
+        )  # Small check for status
+
+        # Update process status
+        process_manager.update_process(
+            process.process_id, status=status, exit_code=exit_code
+        )
+
+        return CommandResult(
+            success=True,
+            process_id=request.process_id,
+            status=status,
+            stdout=chunk,
+            stderr=errors,
+            exit_code=exit_code,
+            output_size=len(chunk),
+            has_more_output=has_more,
+            chunk_start=request.start_byte,
+        )
+
+    except Exception as e:
+        await ctx.error(f"Failed to get output: {str(e)}")
+        return CommandResult(
+            success=False,
+            process_id=request.process_id,
+            status="failed",
+            error_message=str(e),
+        )
+    finally:
+        if client:
+            client.close()
+
+
+@mcp.tool()
+async def get_command_status(request: GetOutputRequest, ctx: Context) -> CommandResult:
+    """
+    Get just the status of a background command without output.
+
+    Lightweight check for process completion and basic info.
+    """
+    client = None
+
+    try:
+        process = process_manager.get_process(request.process_id)
+        if not process:
+            return CommandResult(
+                success=False,
+                process_id=request.process_id,
+                status="failed",
+                error_message=f"Process {request.process_id} not found",
+            )
+
+        # Get SSH connection
+        client = get_ssh_client_from_config(process.host)
+        if not client:
+            return CommandResult(
+                success=False,
+                process_id=request.process_id,
+                status="failed",
+                error_message="Failed to establish SSH connection",
+            )
+
+        # Quick status check only with timeout
+        try:
+            status, _, _, exit_code = get_process_output(
+                client, process, 100
+            )  # Minimal output for status
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                await ctx.warning(
+                    f"Status check timed out after {SSH_READ_TIMEOUT} seconds"
+                )
+                return CommandResult(
+                    success=False,
+                    process_id=request.process_id,
+                    status="timeout",
+                    error_message=f"Status check timed out: {str(e)}",
+                )
+            raise
+
+        # Update process status
+        process_manager.update_process(
+            process.process_id, status=status, exit_code=exit_code
+        )
+
+        execution_time = (datetime.now() - process.start_time).total_seconds()
+
+        return CommandResult(
+            success=True,
+            process_id=request.process_id,
+            status=status,
+            exit_code=exit_code,
+            execution_time=execution_time,
+        )
+
+    except Exception as e:
+        await ctx.error(f"Failed to get status: {str(e)}")
+        return CommandResult(
+            success=False,
+            process_id=request.process_id,
+            status="failed",
+            error_message=str(e),
+        )
+    finally:
+        if client:
+            client.close()
+
+
+@mcp.tool()
+async def kill_command(request: KillProcessRequest, ctx: Context) -> KillProcessResult:
+    """
+    Kill a running background command.
+
+    Uses escalating signals: SIGTERM (graceful) -> SIGKILL (force).
+    Optionally cleans up temporary files.
+    """
+    client = None
+
+    try:
+        process = process_manager.get_process(request.process_id)
+        if not process:
+            return KillProcessResult(
+                success=False,
+                process_id=request.process_id,
+                error_message=f"Process {request.process_id} not found",
+            )
+
+        await ctx.info(f"Killing process {request.process_id}")
+
+        # Check current status first
+        if process.status not in ["running"]:
+            # Update status by checking if still actually running
+            client = get_ssh_client_from_config(process.host)
+            if client and process.pid:
+                stdin, stdout, stderr = client.exec_command(
+                    f"kill -0 {process.pid} 2>/dev/null && echo 'RUNNING' || echo 'STOPPED'"
+                )
+                status_check = stdout.read().decode().strip()
+                if status_check == "STOPPED":
+                    process_manager.update_process(
+                        request.process_id, status="completed"
+                    )
+                    return KillProcessResult(
+                        success=False,
+                        process_id=request.process_id,
+                        error_message=f"Process {request.process_id} is not running (status: {process.status})",
+                    )
+
+        # Get SSH connection if not already established
+        if not client:
+            client = get_ssh_client_from_config(process.host)
+        if not client:
+            return KillProcessResult(
+                success=False,
+                process_id=request.process_id,
+                error_message="Failed to establish SSH connection",
+            )
+
+        await ctx.report_progress(0.5)
+
+        # Kill the process with timeout
+        try:
+            killed, message = kill_background_process(client, process)
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                await ctx.warning(
+                    f"Process kill operation timed out after {SSH_COMMAND_TIMEOUT} seconds"
+                )
+                return KillProcessResult(
+                    success=False,
+                    process_id=request.process_id,
+                    error_message=f"Process kill operation timed out: {str(e)}",
+                )
+            raise
+
+        if killed:
+            # Update process status
+            process_manager.update_process(request.process_id, status="killed")
+
+            # Clean up files if requested
+            cleanup_message = ""
+            if request.cleanup_files:
+                await ctx.report_progress(0.8)
+                cleaned = cleanup_process_files(client, process)
+                if cleaned:
+                    cleanup_message = " Files cleaned up."
+                else:
+                    cleanup_message = " Warning: Failed to clean up some files."
+
+            await ctx.info(f"Process {request.process_id} killed successfully")
+
+            return KillProcessResult(
+                success=True,
+                process_id=request.process_id,
+                message=message + cleanup_message,
+            )
+        else:
+            return KillProcessResult(
+                success=False,
+                process_id=request.process_id,
+                error_message=message,
+            )
+
+    except Exception as e:
+        await ctx.error(f"Failed to kill process: {str(e)}")
+        return KillProcessResult(
+            success=False,
+            process_id=request.process_id,
+            error_message=str(e),
+        )
+    finally:
+        if client:
+            client.close()
 
 
 @mcp.tool()
@@ -111,7 +492,7 @@ async def transfer_file(
     try:
         from mcp_ssh.ssh import transfer_file_scp
 
-        await ctx.report_progress(0.2, message="Establishing connection...")
+        await ctx.report_progress(0.2)
         client = get_ssh_client_from_config(request.host)
 
         if client is None:
@@ -123,13 +504,28 @@ async def transfer_file(
                 error_message=f"Failed to connect to host '{request.host}'",
             )
 
-        await ctx.report_progress(0.5, message="Transferring file...")
-        bytes_transferred = transfer_file_scp(
-            client, request.local_path, request.remote_path, request.direction
-        )
-        client.close()
+        await ctx.report_progress(0.5)
+        try:
+            bytes_transferred = transfer_file_scp(
+                client, request.local_path, request.remote_path, request.direction
+            )
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                await ctx.warning(
+                    f"File transfer timed out after {SSH_TRANSFER_TIMEOUT} seconds"
+                )
+                return FileTransferResult(
+                    success=False,
+                    local_path=request.local_path,
+                    remote_path=request.remote_path,
+                    host=request.host,
+                    error_message=f"File transfer timed out: {str(e)}",
+                )
+            raise
+        finally:
+            client.close()
 
-        await ctx.report_progress(1.0, message="Transfer completed")
+        await ctx.report_progress(1.0)
         await ctx.info(f"Successfully transferred {bytes_transferred} bytes")
 
         return FileTransferResult(
@@ -186,24 +582,48 @@ def ssh_help() -> str:
 1. List available SSH hosts:
    - Use the 'ssh://hosts' resource to see all configured hosts
 
-2. Execute commands:
-   - Use the 'execute_command' tool to run commands on remote hosts
-   - Specify the host (from SSH config) and command to execute
+2. Execute commands (Background Execution):
+   - Use the 'execute_command' tool to run commands in background
+   - All commands run in background and return immediately with process_id
+   - Waits briefly for quick commands to complete
    - Example: execute_command(host="your-host", command="ls -la")
 
-3. Transfer files:
-   - Use the 'transfer_file' tool to upload/download files
-   - Specify host, local_path, remote_path, and direction ("upload" or "download")
-   - Example: transfer_file(host="your-host", local_path="/tmp/file.txt", remote_path="/home/user/file.txt", direction="upload")
+3. Get command output:
+   - Use 'get_command_output' to retrieve output from background commands
+   - Supports chunking for large outputs
+   - Example: get_command_output(process_id="abc123", start_byte=0, chunk_size=10000)
 
-Example usage:
-1. First, check available hosts using the 'ssh://hosts' resource
-2. Execute commands using the 'execute_command' tool
-3. Transfer files using the 'transfer_file' tool
+4. Check command status:
+   - Use 'get_command_status' to check if a command is still running
+   - Lightweight check without retrieving output
+   - Example: get_command_status(process_id="abc123")
 
-All operations provide structured output with detailed progress tracking!
+5. Kill running commands:
+   - Use 'kill_command' to terminate running background processes
+   - Uses graceful termination (SIGTERM) then force kill (SIGKILL)
+   - Optionally cleans up temporary files
+   - Example: kill_command(process_id="abc123", cleanup_files=true)
 
-Would you like to try any of these operations?"""
+6. Transfer files:
+   - Use 'transfer_file' to upload/download files via SCP
+   - Example: transfer_file(host="your-host", local_path="/local/file", remote_path="/remote/file", direction="upload")
+
+Background Execution Features:
+- All commands run in background with process tracking
+- Configurable output size limits and chunking
+- Process IDs for tracking and management
+- Automatic cleanup of temporary files
+- Escalating kill signals for reliable termination
+
+Environment Configuration:
+- MCP_SSH_MAX_OUTPUT_SIZE: Maximum output size before chunking (default: 50KB)
+- MCP_SSH_QUICK_WAIT_TIME: Wait time for quick commands (default: 5 seconds)
+- MCP_SSH_CHUNK_SIZE: Default chunk size for output retrieval (default: 10KB)
+- MCP_SSH_CONNECT_TIMEOUT: SSH connection timeout in seconds (default: 30)
+- MCP_SSH_COMMAND_TIMEOUT: SSH command execution timeout in seconds (default: 60)
+- MCP_SSH_TRANSFER_TIMEOUT: File transfer timeout in seconds (default: 300)
+- MCP_SSH_READ_TIMEOUT: Output reading timeout in seconds (default: 30)
+"""
 
 
 def main() -> None:
