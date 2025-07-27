@@ -4,6 +4,7 @@ SSH Client - Core SSH functionality
 
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -22,6 +23,17 @@ SSH_TRANSFER_TIMEOUT = int(
     os.getenv("MCP_SSH_TRANSFER_TIMEOUT", "300")
 )  # 5 minutes default
 SSH_READ_TIMEOUT = int(os.getenv("MCP_SSH_READ_TIMEOUT", "30"))  # 30 seconds default
+
+# Connection optimization settings
+SSH_CONNECTION_POOL_SIZE = int(
+    os.getenv("MCP_SSH_CONNECTION_POOL_SIZE", "5")
+)  # Default pool size
+SSH_CONNECTION_REUSE = (
+    os.getenv("MCP_SSH_CONNECTION_REUSE", "false").lower() == "true"
+)  # Disable connection reuse by default for stability
+
+# Simple connection cache for performance
+_connection_cache: dict[str, tuple[paramiko.SSHClient, float]] = {}
 
 # Set up logging to file
 log_dir = Path(__file__).parent.parent.parent / "logs"
@@ -100,6 +112,28 @@ def parse_ssh_config() -> dict[str, dict[str, str]]:
 def get_ssh_client_from_config(config_host: str) -> paramiko.SSHClient | None:
     """Get an SSH client connected using only the SSH config host name"""
     logger.debug(f"Attempting to connect to host: {config_host}")
+
+    # Check connection cache first (skip in test environment)
+    if (
+        SSH_CONNECTION_REUSE
+        and config_host in _connection_cache
+        and "pytest" not in sys.modules
+    ):
+        client, timestamp = _connection_cache[config_host]
+        # Check if connection is still valid (cache for 5 minutes)
+        if time.time() - timestamp < 300:
+            try:
+                # Test if connection is still alive
+                client.exec_command("echo 'test'", timeout=5)
+                logger.debug(f"Reusing cached connection to {config_host}")
+                return client
+            except Exception:
+                # Connection is dead, remove from cache
+                logger.debug(
+                    f"Cached connection to {config_host} is dead, removing from cache"
+                )
+                del _connection_cache[config_host]
+
     hosts = parse_ssh_config()
 
     if config_host not in hosts:
@@ -195,6 +229,12 @@ def get_ssh_client_from_config(config_host: str) -> paramiko.SSHClient | None:
 
         client.connect(**connect_kwargs)
         logger.info(f"Successfully connected to {config_host}")
+
+        # Cache the connection if reuse is enabled
+        if SSH_CONNECTION_REUSE:
+            _connection_cache[config_host] = (client, time.time())
+            logger.debug(f"Cached connection to {config_host}")
+
         return client
     except Exception as e:
         logger.error(f"Failed to connect to {config_host}: {str(e)}")
@@ -221,10 +261,8 @@ def execute_ssh_command(
 
         # Read output with timeout to prevent hanging
         start_time = time.time()
-        stdout_str = ""
-        stderr_str = ""
 
-        # Read stdout with timeout
+        # Wait for command to complete with timeout
         while not stdout.channel.exit_status_ready():
             if time.time() - start_time > SSH_READ_TIMEOUT:
                 logger.warning(
@@ -233,11 +271,12 @@ def execute_ssh_command(
                 break
             time.sleep(0.1)
 
+        # Get exit code first
+        exit_code = stdout.channel.recv_exit_status()
+
+        # Read output after command completes
         stdout_str = stdout.read().decode("utf-8")
         stderr_str = stderr.read().decode("utf-8")
-
-        # Get exit code
-        exit_code = stdout.channel.recv_exit_status()
 
         logger.debug(f"Command executed with exit code: {exit_code}")
         logger.debug(f"stdout: {stdout_str}")

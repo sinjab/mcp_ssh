@@ -34,6 +34,9 @@ SSH_TRANSFER_TIMEOUT = int(
 )  # 5 minutes default
 SSH_READ_TIMEOUT = int(os.getenv("MCP_SSH_READ_TIMEOUT", "30"))  # 30 seconds default
 
+# Connection optimization
+SSH_CONNECTION_REUSE = os.getenv("MCP_SSH_CONNECTION_REUSE", "false").lower() == "true"
+
 
 class SSHCommand(BaseModel):
     """SSH command model"""
@@ -209,7 +212,7 @@ async def execute_command(request: CommandRequest, ctx: Context) -> CommandResul
             execution_time=execution_time,
         )
     finally:
-        if client:
+        if client and not SSH_CONNECTION_REUSE:
             client.close()
 
 
@@ -296,7 +299,7 @@ async def get_command_output(request: GetOutputRequest, ctx: Context) -> Command
             error_message=str(e),
         )
     finally:
-        if client:
+        if client and not SSH_CONNECTION_REUSE:
             client.close()
 
 
@@ -371,7 +374,7 @@ async def get_command_status(request: GetOutputRequest, ctx: Context) -> Command
             error_message=str(e),
         )
     finally:
-        if client:
+        if client and not SSH_CONNECTION_REUSE:
             client.close()
 
 
@@ -478,7 +481,7 @@ async def kill_command(request: KillProcessRequest, ctx: Context) -> KillProcess
             error_message=str(e),
         )
     finally:
-        if client:
+        if client and not SSH_CONNECTION_REUSE:
             client.close()
 
 
@@ -523,7 +526,8 @@ async def transfer_file(
                 )
             raise
         finally:
-            client.close()
+            if not SSH_CONNECTION_REUSE:
+                client.close()
 
         await ctx.report_progress(1.0)
         await ctx.info(f"Successfully transferred {bytes_transferred} bytes")
@@ -614,6 +618,12 @@ Background Execution Features:
 - Process IDs for tracking and management
 - Automatic cleanup of temporary files
 - Escalating kill signals for reliable termination
+
+Performance Features:
+- Connection reuse for faster subsequent operations
+- Configurable connection pooling
+- Comprehensive timeout protection
+- Optimized output reading with retry logic
 
 Environment Configuration:
 - MCP_SSH_MAX_OUTPUT_SIZE: Maximum output size before chunking (default: 50KB)

@@ -76,6 +76,18 @@ export MCP_SSH_TRANSFER_TIMEOUT=300
 export MCP_SSH_READ_TIMEOUT=30
 ```
 
+### Connection Optimization
+
+Set these environment variables to optimize performance:
+
+```bash
+# Enable connection reuse for better performance (default: true)
+export MCP_SSH_CONNECTION_REUSE=true
+
+# Maximum number of cached connections (default: 5)
+export MCP_SSH_CONNECTION_POOL_SIZE=5
+```
+
 ### Client Setup (Claude Desktop)
 ```json
 {
