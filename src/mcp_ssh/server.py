@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from mcp_ssh.ssh import get_ssh_client_from_config
 
 from .background import process_manager
+from .security import validate_command, get_validator
 from .ssh import (
     cleanup_process_files,
     execute_command_background,
@@ -132,6 +133,17 @@ async def execute_command(request: CommandRequest, ctx: Context) -> CommandResul
 
     try:
         await ctx.info(f"Starting command on {request.host}")
+
+        # Validate command security
+        is_allowed, reason = validate_command(request.command, request.host)
+        if not is_allowed:
+            await ctx.error(f"Command blocked by security policy: {reason}")
+            return CommandResult(
+                success=False,
+                process_id="",
+                status="failed",
+                error_message=f"Security policy violation: {reason}",
+            )
 
         # Get SSH connection
         client = get_ssh_client_from_config(request.host)
@@ -633,7 +645,20 @@ Environment Configuration:
 - MCP_SSH_COMMAND_TIMEOUT: SSH command execution timeout in seconds (default: 60)
 - MCP_SSH_TRANSFER_TIMEOUT: File transfer timeout in seconds (default: 300)
 - MCP_SSH_READ_TIMEOUT: Output reading timeout in seconds (default: 30)
+
+Security Configuration:
+- MCP_SSH_SECURITY_MODE: Security mode - 'blacklist', 'whitelist', or 'disabled' (default: blacklist)
+- MCP_SSH_COMMAND_BLACKLIST: Semicolon-separated regex patterns for blocked commands
+- MCP_SSH_COMMAND_WHITELIST: Semicolon-separated regex patterns for allowed commands
+- MCP_SSH_CASE_SENSITIVE: Whether pattern matching is case sensitive (default: false)
 """
+
+
+@mcp.tool()
+async def get_security_info() -> dict:
+    """Get current security configuration and validation rules"""
+    validator = get_validator()
+    return validator.get_security_info()
 
 
 def main() -> None:

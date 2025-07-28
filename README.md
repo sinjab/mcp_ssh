@@ -7,7 +7,7 @@ A production-ready Model Context Protocol (MCP) server with SSH capabilities, fe
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-green)](https://modelcontextprotocol.io/)
-[![Tests](https://img.shields.io/badge/tests-90%20%7C%2087%25%20coverage-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-107%20tests-brightgreen)](#testing)
 [![Production Ready](https://img.shields.io/badge/status-production%20ready-success)](#quality-assurance-validation)
 
 ## Features
@@ -16,9 +16,10 @@ A production-ready Model Context Protocol (MCP) server with SSH capabilities, fe
 - **SSH Integration**: Config parsing, encrypted keys, connection management, file transfers
 - **Structured Output**: Rich JSON schemas for programmatic integration
 - **Progress Tracking**: Real-time progress reporting and logging  
-- **Production Ready**: 90 tests, 87% coverage, comprehensive QA validation
+- **Production Ready**: 107 tests, comprehensive QA validation
 - **Background Execution**: All commands run in background with process tracking
 - **Timeout Protection**: Comprehensive timeout handling prevents hanging operations
+- **Security Controls**: Configurable command validation with blacklist/whitelist patterns
 - **Performance Optimized**: Connection reuse and output management optimizations
 
 ## Quick Start
@@ -45,6 +46,7 @@ uv run mcp dev src/mcp_ssh/server.py
 | **Tool** | `get_command_status` | Check status of background commands without retrieving output |
 | **Tool** | `kill_command` | Kill running background processes with graceful termination and cleanup |
 | **Tool** | `transfer_file` | Upload/download files via SCP with progress tracking |
+| **Tool** | `get_security_info` | Get current security configuration and validation rules |
 | **Resource** | `ssh://hosts` | List all configured SSH hosts with detailed info |
 | **Prompt** | `ssh_help` | Interactive guidance for SSH operations |
 
@@ -94,6 +96,26 @@ export MCP_SSH_CONNECTION_REUSE=true
 # Maximum number of cached connections (default: 5)
 export MCP_SSH_CONNECTION_POOL_SIZE=5
 ```
+
+### Security Configuration
+
+Set these environment variables to control command validation and security:
+
+```bash
+# Security mode: blacklist, whitelist, or disabled (default: blacklist)
+export MCP_SSH_SECURITY_MODE=blacklist
+
+# Semicolon-separated regex patterns for blocked commands
+export MCP_SSH_COMMAND_BLACKLIST="rm\s+.*-r.*;sudo\s+.*;shutdown.*"
+
+# Semicolon-separated regex patterns for allowed commands (whitelist mode)
+export MCP_SSH_COMMAND_WHITELIST="ls\s+.*;cat\s+.*;ps\s+.*"
+
+# Case-sensitive pattern matching (default: false)
+export MCP_SSH_CASE_SENSITIVE=false
+```
+
+For detailed security configuration, see [SECURITY.md](SECURITY.md).
 
 ### Client Setup (Claude Desktop)
 ```json
@@ -151,7 +173,7 @@ uv run python scripts/test.py pattern
 ```
 
 ### Testing
-- **49 tests** across 4 modules with **94% coverage**
+- **107 tests** across 5 modules with comprehensive coverage
 - **Modular structure**: `tests/test_*.py` for each component
 - **Shared fixtures**: Common utilities in `tests/conftest.py`
 - **CI/CD ready**: GitHub Actions workflow
