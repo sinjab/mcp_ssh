@@ -21,10 +21,44 @@ logs/
 htmlcov/
 .coverage
 .coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
 
 # Development tools
 .mypy_cache/
 .ruff_cache/
+bandit-report.json
 
 # Rules
 .*/rules/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# Windsurf
+.windsurf/
+.cursor/
