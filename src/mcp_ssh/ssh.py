@@ -432,15 +432,24 @@ def execute_command_background(
     client: paramiko.SSHClient, command: str, output_file: str, error_file: str
 ) -> int:
     """Execute command in background, return PID."""
+    import shlex
 
-    # Simple background wrapper
+    # Properly escape the command to handle quotes and shell operators
+    # We need to escape the command for safe inclusion in bash -c
+    escaped_command = command.replace("'", "'\"'\"'")
+    
+    # Create background wrapper with proper escaping
     bg_command = f"""
     nohup bash -c '
-        {command}
+        {escaped_command}
         echo $? > {output_file}.exit
     ' > {output_file} 2> {error_file} &
     echo $!
     """
+    
+    logger.debug(f"Original command: {command}")
+    logger.debug(f"Escaped command: {escaped_command}")
+    logger.debug(f"Background wrapper: {bg_command}")
 
     stdin, stdout, stderr = client.exec_command(bg_command, timeout=SSH_COMMAND_TIMEOUT)
 
@@ -457,10 +466,18 @@ def execute_command_background(
         time.sleep(0.1)
 
     pid_output = stdout.read().decode().strip()
+    stderr_output = stderr.read().decode().strip()
+    
+    logger.debug(f"PID output: '{pid_output}'")
+    if stderr_output:
+        logger.debug(f"Background command stderr: {stderr_output}")
 
     try:
         return int(pid_output)
     except ValueError:
+        logger.error(f"Failed to parse PID from output: '{pid_output}'")
+        if stderr_output:
+            logger.error(f"Background command error: {stderr_output}")
         raise RuntimeError(f"Failed to get PID: {pid_output}") from None
 
 
