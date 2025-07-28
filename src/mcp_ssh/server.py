@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from mcp_ssh.ssh import get_ssh_client_from_config
 
 from .background import process_manager
-from .security import validate_command, get_validator
+from .security import get_validator, validate_command
 from .ssh import (
     cleanup_process_files,
     execute_command_background,

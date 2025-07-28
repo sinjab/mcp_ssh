@@ -432,12 +432,11 @@ def execute_command_background(
     client: paramiko.SSHClient, command: str, output_file: str, error_file: str
 ) -> int:
     """Execute command in background, return PID."""
-    import shlex
 
     # Properly escape the command to handle quotes and shell operators
     # We need to escape the command for safe inclusion in bash -c
     escaped_command = command.replace("'", "'\"'\"'")
-    
+
     # Create background wrapper with proper escaping
     bg_command = f"""
     nohup bash -c '
@@ -446,7 +445,7 @@ def execute_command_background(
     ' > {output_file} 2> {error_file} &
     echo $!
     """
-    
+
     logger.debug(f"Original command: {command}")
     logger.debug(f"Escaped command: {escaped_command}")
     logger.debug(f"Background wrapper: {bg_command}")
@@ -467,7 +466,7 @@ def execute_command_background(
 
     pid_output = stdout.read().decode().strip()
     stderr_output = stderr.read().decode().strip()
-    
+
     logger.debug(f"PID output: '{pid_output}'")
     if stderr_output:
         logger.debug(f"Background command stderr: {stderr_output}")
