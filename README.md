@@ -2,9 +2,13 @@
 
 A production-ready Model Context Protocol (MCP) server with SSH capabilities, featuring enterprise-grade testing infrastructure and development tools.
 
-[![CI](https://github.com/yourusername/mcp_ssh/workflows/CI/badge.svg)](https://github.com/yourusername/mcp_ssh/actions)
-[![Coverage](https://codecov.io/gh/yourusername/mcp_ssh/branch/main/graph/badge.svg)](https://codecov.io/gh/yourusername/mcp_ssh)
+[![CI](https://github.com/sinjab/mcp_ssh/workflows/CI/badge.svg)](https://github.com/sinjab/mcp_ssh/actions)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-green)](https://modelcontextprotocol.io/)
+[![Tests](https://img.shields.io/badge/tests-90%20%7C%2087%25%20coverage-brightgreen)](#testing)
+[![Production Ready](https://img.shields.io/badge/status-production%20ready-success)](#quality-assurance-validation)
 
 ## Features
 
@@ -21,7 +25,7 @@ A production-ready Model Context Protocol (MCP) server with SSH capabilities, fe
 
 ```bash
 # Install with uv (recommended)
-git clone https://github.com/yourusername/mcp_ssh.git
+git clone https://github.com/sinjab/mcp_ssh.git
 cd mcp_ssh
 uv sync
 
@@ -127,7 +131,7 @@ Host production
 ### Setup
 ```bash
 # Clone and setup
-git clone https://github.com/yourusername/mcp_ssh.git
+git clone https://github.com/sinjab/mcp_ssh.git
 cd mcp_ssh
 uv sync --extra dev
 ```
@@ -317,7 +321,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Links
 
-- **Documentation**: [GitHub Repository](https://github.com/yourusername/mcp_ssh)
-- **Issues**: [GitHub Issues](https://github.com/yourusername/mcp_ssh/issues)
+- **Documentation**: [GitHub Repository](https://github.com/sinjab/mcp_ssh)
+- **Issues**: [GitHub Issues](https://github.com/sinjab/mcp_ssh/issues)
 - **MCP Specification**: [Model Context Protocol](https://modelcontextprotocol.io/)
 - **FastMCP Framework**: [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)

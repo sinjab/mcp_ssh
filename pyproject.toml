@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "Your Name", email = "your.email@example.com" },
+    { name = "sinjab", email = "sinjab@users.noreply.github.com" },
 ]
 maintainers = [
-    { name = "Your Name", email = "your.email@example.com" },
+    { name = "sinjab", email = "sinjab@users.noreply.github.com" },
 ]
 keywords = [
     "mcp",
@@ -45,11 +45,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/mcp_ssh"
-Documentation = "https://github.com/yourusername/mcp_ssh#readme"
-Repository = "https://github.com/yourusername/mcp_ssh"
-Issues = "https://github.com/yourusername/mcp_ssh/issues"
-Changelog = "https://github.com/yourusername/mcp_ssh/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/sinjab/mcp_ssh"
+Documentation = "https://github.com/sinjab/mcp_ssh#readme"
+Repository = "https://github.com/sinjab/mcp_ssh"
+Issues = "https://github.com/sinjab/mcp_ssh/issues"
+Changelog = "https://github.com/sinjab/mcp_ssh/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
