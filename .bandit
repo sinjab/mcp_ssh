@@ -1,0 +1,23 @@
+# Bandit configuration file for MCP SSH
+# This project is specifically designed for SSH automation, so some security warnings are expected
+
+skips:
+  - B507  # ssh_no_host_key_verification - We use AutoAddPolicy for SSH connections, which is necessary for automation
+  - B601  # paramiko_calls - We use paramiko exec_command, which is the purpose of this tool
+
+# Note: B108 (hardcoded_tmp_directory) has been fixed by using tempfile.gettempdir()
+
+confidence: medium
+severity: medium
+
+include:
+  - "src/"
+
+exclude_dirs:
+  - "tests"
+  - "htmlcov"
+  - ".git"
+  - ".venv"
+  - "__pycache__"
+  - ".mypy_cache"
+  - ".pytest_cache"

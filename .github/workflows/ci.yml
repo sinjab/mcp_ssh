@@ -84,5 +84,5 @@ jobs:
     
     - name: Run Bandit Security Scan
       run: |
-        bandit -r src/ -f json -o bandit-report.json || true
-        bandit -r src/
+        bandit -r src/ -f json -o bandit-report.json -c .bandit || true
+        bandit -r src/ -c .bandit

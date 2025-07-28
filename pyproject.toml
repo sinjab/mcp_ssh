@@ -199,3 +199,8 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "test_*.py" = ["F401", "F811"]
+
+[dependency-groups]
+dev = [
+    "bandit[toml]>=1.8.6",
+]

@@ -1,3 +1,5 @@
+import os
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +31,9 @@ class BackgroundProcessManager:
         process_id = str(uuid.uuid4())[:8]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+        # Use system temp directory for better security
+        temp_dir = os.environ.get("MCP_SSH_TEMP_DIR", tempfile.gettempdir())
+
         process = BackgroundProcess(
             process_id=process_id,
             host=host,
@@ -36,8 +41,8 @@ class BackgroundProcessManager:
             pid=None,
             start_time=datetime.now(),
             status="running",
-            output_file=f"/tmp/mcp_ssh_{process_id}_{timestamp}.out",
-            error_file=f"/tmp/mcp_ssh_{process_id}_{timestamp}.err",
+            output_file=f"{temp_dir}/mcp_ssh_{process_id}_{timestamp}.out",
+            error_file=f"{temp_dir}/mcp_ssh_{process_id}_{timestamp}.err",
         )
 
         self.processes[process_id] = process
