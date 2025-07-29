@@ -58,7 +58,3 @@ Thumbs.db
 
 # pyenv
 .python-version
-
-# Windsurf
-.windsurf/
-.cursor/
